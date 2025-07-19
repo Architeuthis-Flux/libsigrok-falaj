@@ -57,7 +57,7 @@ SR_PRIV int jumperless_fala_receive_data(int fd, int revents, void *cb_data)
                         len = serial_read_blocking(serial, read_buffer, 1024, 10);
                         if (len == 0)
                                 return TRUE;
-                        else if (len < 20 || !parse_header(read_buffer, &hd))
+                        else if (len < 20 || !jumperless_parse_header(read_buffer, &hd))
                         {
                                 sr_err("bad header");
                                 sdi->driver->dev_acquisition_stop(sdi);

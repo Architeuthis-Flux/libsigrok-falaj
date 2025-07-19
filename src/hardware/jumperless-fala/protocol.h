@@ -69,6 +69,6 @@ typedef struct fala_header
     gboolean mixed_signal;         /* Mixed signal mode flag */
 } fala_header;
 
-SR_PRIV gboolean parse_header(const char *buf, fala_header *hd);
+SR_PRIV gboolean jumperless_parse_header(const char *buf, fala_header *hd);
 SR_PRIV int jumperless_fala_receive_data(int fd, int revents, void *cb_data);
 #endif

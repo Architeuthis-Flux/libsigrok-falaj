@@ -76,7 +76,7 @@ static gboolean next_field(const char **buf)
         return TRUE;
 }
 
-SR_PRIV gboolean parse_header(const char *buf, fala_header *hd)
+SR_PRIV gboolean jumperless_parse_header(const char *buf, fala_header *hd)
 {
         /* Jumperless FALA header format: $JFALADATA;logic_ch;analog_ch;trigger_ch_mask;trigger_mask;edge;rate;count;pre_trigger; */
         if (strncmp(buf, "$JFALADATA", 10))
@@ -181,7 +181,7 @@ scan(struct sr_dev_driver *di, GSList *options)
                 return NULL;
         }
         len = serial_read_blocking(serial, buf, ARRAY_SIZE(buf), 500); 
-        if (len < 20 || !parse_header(buf, &hd))
+        if (len < 20 || !jumperless_parse_header(buf, &hd))
         {
                 sr_err("Jumperless FALA identify failed");
                 serial_close(serial);
