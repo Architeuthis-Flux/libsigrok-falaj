@@ -90,7 +90,7 @@ $JFALADATA;logic_channels;analog_channels;trigger_ch_mask;trigger_mask;edge;rate
 pulseview -d jumperless-fala:conn=/dev/ttyACM0
 
 # Manual connection string
-pulseview -d jumperless-fala:conn=/dev/cu.usbmodem1234
+pulseview -d jumperless-fala:conn=/dev/cu.usbmodemJLV5port5
 ```
 
 ### sigrok-cli

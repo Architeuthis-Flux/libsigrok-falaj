@@ -15,6 +15,9 @@
 .*.sw*
 /*.kdev4
 /Makefile.am.user
+*.swp
+*.swo
+.DS_Store
 
 # clangd language server cruft
 .cache/
@@ -80,3 +83,9 @@ stamp-h?
 /tests/*.log
 /tests/*.trs
 /tests/main
+
+# PulseView-BPandJ Build Artifacts
+pulseview-bpandj/pulseview_BPandJ_build/
+pulseview-bpandj/libsigrokdecode/
+*.app
+*.dmg
