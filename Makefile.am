@@ -307,6 +307,12 @@ src_libdrivers_la_SOURCES += \
 	src/hardware/bp5-binmode-fala/protocol.c \
 	src/hardware/bp5-binmode-fala/api.c
 endif
+if HW_JUMPERLESS_FALA
+src_libdrivers_la_SOURCES += \
+	src/hardware/jumperless-fala/protocol.h \
+	src/hardware/jumperless-fala/protocol.c \
+	src/hardware/jumperless-fala/api.c
+endif
 if HW_CEM_DT_885X
 src_libdrivers_la_SOURCES += \
 	src/hardware/cem-dt-885x/protocol.h \
