@@ -1,0 +1,59 @@
+{
+	"folders": [
+		{
+			"path": "../JumperlessV5/RP23V50firmware"
+		},
+		{
+			"path": "."
+		},
+		{
+			"path": "../julseview"
+		}
+	],
+	"settings": {
+		"files.associations": {
+			"array": "cpp",
+			"deque": "cpp",
+			"list": "cpp",
+			"string": "cpp",
+			"unordered_map": "cpp",
+			"vector": "cpp",
+			"string_view": "cpp",
+			"initializer_list": "cpp",
+			"ranges": "cpp",
+			"cstring": "cpp",
+			"cmath": "cpp",
+			"bit": "cpp",
+			"compare": "cpp",
+			"cstddef": "cpp",
+			"limits": "cpp",
+			"memory": "cpp",
+			"new": "cpp",
+			"functional": "cpp",
+			"*.tcc": "cpp",
+			"optional": "cpp",
+			"ratio": "cpp",
+			"system_error": "cpp",
+			"regex": "cpp",
+			"tuple": "cpp",
+			"type_traits": "cpp",
+			"utility": "cpp",
+			"variant": "cpp",
+			"pads_bank0.h": "c",
+			"charconv": "cpp",
+			"chrono": "cpp",
+			"format": "cpp",
+			"cstdint": "cpp",
+			"algorithm": "cpp",
+			"random": "cpp",
+			"span": "cpp",
+			"text_encoding": "cpp",
+			"ostream": "cpp",
+			"*.h": "cpp",
+			"*.ino": "cpp"
+		},
+		"clang-format.language.cpp.style": "file",
+		"cortex-debug.variableUseNaturalFormat": false,
+		"C_Cpp.enhancedColorization": "enabled"
+	}
+}

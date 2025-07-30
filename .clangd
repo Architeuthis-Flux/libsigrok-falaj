@@ -1,0 +1,60 @@
+CompileFlags:
+  Compiler: clang
+  Add:
+    # System includes for macOS
+    - "-I/usr/local/include"
+    - "-I/opt/homebrew/include"
+    
+    # GLib includes (from pkg-config output we saw earlier)
+    - "-I/opt/homebrew/Cellar/glib/2.84.3/include/glib-2.0"
+    - "-I/opt/homebrew/Cellar/glib/2.84.3/lib/glib-2.0/include"
+    - "-I/opt/homebrew/opt/gettext/include"
+    - "-I/opt/homebrew/Cellar/pcre2/10.45/include"
+    
+    # libsigrok project includes
+    - "-I."
+    - "-Iinclude"
+    - "-Isrc"
+    
+    # pkg-config style includes for dependencies
+    - "-I/usr/local/include/libzip"
+    - "-I/usr/local/include/libusb-1.0"
+    - "-I/usr/local/include/libftdi1"
+    - "-I/opt/homebrew/include/libusb-1.0"
+    - "-I/opt/homebrew/include/libzip"
+    
+    # Standard library paths
+    - "-I/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include"
+    
+    # Preprocessor defines for libsigrok
+    - "-DHAVE_CONFIG_H"
+    - "-D_GNU_SOURCE"
+    - "-DPACKAGE_VERSION=\"0.6.0\""
+    - "-DLIBSIGROK_INTERNAL"
+    - "-DCONF_LIBSIGROK_FIRMWAREDIR=\"/usr/local/share/sigrok-firmware\""
+    
+    # Driver-specific defines  
+    - "-DHAVE_BP5_BINMODE_FALA"
+    - "-DHAVE_JUMPERLESS_FALA"
+    - "-DHAVE_JUMPERLESS_LOGIC"
+    
+    # C standard
+    - "-std=c99"
+    
+    # macOS specific  
+    - "-mmacosx-version-min=10.15"
+    
+    # Common warning suppressions for C projects
+    - "-Wno-unused-parameter"
+    - "-Wno-unused-variable"
+    - "-Wno-unused-function"
+    - "-Wno-missing-field-initializers"
+
+---
+Diagnostics:
+  ClangTidy:
+    Remove: 
+      - misc-definitions-in-headers
+      - readability-magic-numbers
+      - cppcoreguidelines-avoid-magic-numbers
+  UnusedIncludes: None 

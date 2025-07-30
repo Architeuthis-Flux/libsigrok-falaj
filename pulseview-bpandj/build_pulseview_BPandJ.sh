@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Build PulseView-BPandJ.app with Bus Pirate and Jumperless FALA Support
-# This script builds PulseView using our enhanced libsigrok-falaj with both drivers
+# Build JulsView-BPandJ.app with Bus Pirate and Jumperless FALA Support  
+# This script builds JulsView (local fork) using our enhanced libsigrok-falaj with all drivers
 
 set -e
 
@@ -17,8 +17,8 @@ NC='\033[0m'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORK_DIR="$SCRIPT_DIR/pulseview_BPandJ_build"
 LIBSIGROK_FALA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PULSEVIEW_REPO="https://github.com/sigrokproject/pulseview.git"
-PULSEVIEW_BRANCH="master"
+JULSEVIEW_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../julseview" && pwd)"
+PULSEVIEW_BRANCH="main"
 INSTALL_PREFIX="/usr/local"
 
 print_status() {
@@ -41,6 +41,277 @@ print_header() {
     echo -e "${CYAN}========================================${NC}"
     echo -e "${CYAN} $1${NC}"
     echo -e "${CYAN}========================================${NC}"
+}
+
+# Cache sudo credentials to avoid repeated password prompts
+cache_sudo() {
+    print_status "Caching sudo credentials..."
+    sudo -v
+    
+    # Keep sudo alive in background
+    while true; do sudo -n true; sleep 6000; kill -0 "$$" || exit; done 2>/dev/null &
+}
+
+# Close existing JulseView app if running
+close_existing_app() {
+    print_status "Checking for existing JulseView-BPandJ.app..."
+    
+    if pgrep -f "JulseView-BPandJ" > /dev/null; then
+        print_status "Closing existing JulseView-BPandJ.app..."
+        osascript -e 'tell application "JulseView-BPandJ" to quit' 2>/dev/null || true
+        # Also try force quit if regular quit didn't work
+        sleep 2
+        if pgrep -f "JulseView-BPandJ" > /dev/null; then
+            pkill -f "JulseView-BPandJ" || true
+        fi
+        print_success "Closed existing app"
+    fi
+}
+
+# Force save all files in common editors
+save_all_files() {
+    print_status "Auto-saving files in common editors..."
+    
+    # # VSCode
+    # osascript -e 'tell application "Visual Studio Code" to activate' 2>/dev/null || true
+    # osascript -e 'tell application "System Events" to keystroke "s" using {command down, option down}' 2>/dev/null || true
+    
+    # Cursor
+    osascript -e 'tell application "Cursor" to activate' 2>/dev/null || true
+    osascript -e 'tell application "System Events" to keystroke "s" using {command down, option down}' 2>/dev/null || true
+    
+    # Other editors
+    # for app in "Xcode" "TextEdit" "Sublime Text" "Atom"; do
+    #     osascript -e "tell application \"$app\" to activate" 2>/dev/null || true
+    #     osascript -e 'tell application "System Events" to keystroke "s" using command down' 2>/dev/null || true
+    # done
+    
+    sleep 1  # Give apps time to save
+    print_success "Auto-save completed"
+}
+
+# Fast rebuild - optimized version that skips some steps
+fast_rebuild() {
+    print_header "Fast Rebuild JulsView-BPandJ"
+    
+    # Cache sudo early
+    cache_sudo
+    
+    # Close existing app
+    close_existing_app
+    
+    # Save all files
+    save_all_files
+    
+    # Quick dependency check (skip full check)
+    if ! command -v cmake &> /dev/null; then
+        print_error "cmake not found. Run '$0 deps' first."
+        exit 1
+    fi
+    
+    # Always build libsigrok for rebuild to ensure consistency
+    print_status "Building libsigrok-falaj for clean rebuild..."
+    cd "$LIBSIGROK_FALA_DIR"
+    
+    # Clean and rebuild libsigrok
+    make clean 2>/dev/null || true
+    ./autogen.sh
+    ./configure \
+        --prefix=/usr/local \
+        --enable-bp5-binmode-fala \
+        --enable-jumperless-mixed-signal \
+        --disable-all-drivers \
+        --enable-demo \
+        --enable-fx2lafw \
+        --enable-dreamsourcelab-dslogic \
+        --enable-kingst-la2016 \
+        --enable-saleae-logic16 \
+        --enable-openbench-logic-sniffer \
+        PKG_CONFIG_PATH="/opt/homebrew/lib/pkgconfig:/usr/local/lib/pkgconfig"
+    
+    make -j$(sysctl -n hw.ncpu 2>/dev/null || echo 4)
+    sudo make install
+    
+    # Setup build environment (lightweight)
+    print_status "Setting up build environment..."
+    mkdir -p "$WORK_DIR"
+    cd "$WORK_DIR"
+    
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        export PKG_CONFIG_PATH="/opt/homebrew/opt/qt@5/lib/pkgconfig:$PKG_CONFIG_PATH"
+        export CMAKE_PREFIX_PATH="/opt/homebrew/opt/qt@5:$CMAKE_PREFIX_PATH"
+        export PATH="/opt/homebrew/opt/qt@5/bin:$PATH"
+    fi
+    
+    # Use local source (ensure fresh copy)
+    print_status "Updating JulsView source link..."
+    if [ -d "pulseview" ]; then
+        rm -rf pulseview
+    fi
+    ln -sf "$JULSEVIEW_DIR" pulseview
+    
+    # Configure (only if needed)
+    cd "$WORK_DIR/pulseview"
+    if [ ! -d "build/CMakeFiles" ]; then
+        print_status "Configuring build (first time)..."
+        rm -rf build
+        mkdir -p build
+        cd build
+        
+        local cmake_opts=(
+            "-DCMAKE_PREFIX_PATH=/opt/homebrew/opt/qt@5"
+            "-DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX"
+            "-DCMAKE_BUILD_TYPE=Release"
+            "-DENABLE_DECODE=ON"
+        )
+        
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            cmake_opts+=(
+                "-DCMAKE_OSX_DEPLOYMENT_TARGET=10.15"
+                "-DQt5_DIR=/opt/homebrew/opt/qt@5/lib/cmake/Qt5"
+            )
+        fi
+        
+        cmake .. "${cmake_opts[@]}"
+    else
+        cd build
+        print_status "Using existing build configuration..."
+    fi
+    
+    # Fast build
+    print_status "Building JulsView (optimized)..."
+    make -j$(sysctl -n hw.ncpu 2>/dev/null || echo 4)
+    
+    # Create app bundle
+    print_status "Creating app bundle..."
+    local app_name="JulseView-BPandJ.app"
+    local app_dir="$app_name/Contents"
+    
+    rm -rf "$app_name"
+    mkdir -p "$app_dir/MacOS" "$app_dir/Frameworks" "$app_dir/Resources"
+    
+    # Copy executable with correct name
+    cp pulseview "$app_dir/MacOS/JulseView-BPandJ"
+    chmod +x "$app_dir/MacOS/JulseView-BPandJ"
+    
+    # Copy app icon
+    local icon_source="$SCRIPT_DIR/julseviewIcon/iconJulseview1024.icns"
+    if [ -f "$icon_source" ]; then
+        print_status "Adding app icon..."
+        cp "$icon_source" "$app_dir/Resources/iconJulseview1024.icns"
+        chmod 644 "$app_dir/Resources/iconJulseview1024.icns"
+        print_status "Icon copied and permissions set"
+        # Verify the icon was copied
+        if [ -f "$app_dir/Resources/iconJulseview1024.icns" ]; then
+            local icon_size=$(stat -f%z "$app_dir/Resources/iconJulseview1024.icns" 2>/dev/null || echo "unknown")
+            print_status "Icon file size: $icon_size bytes"
+        fi
+    else
+        print_warning "App icon not found at: $icon_source"
+        print_status "Looking for alternative icon formats..."
+        # Try PNG version and convert if needed
+        local png_source="$SCRIPT_DIR/julseviewIcon/iconJulseview1024.png"
+        if [ -f "$png_source" ] && command -v sips &> /dev/null; then
+            print_status "Converting PNG to ICNS..."
+            sips -s format icns "$png_source" --out "$app_dir/Resources/iconJulseview1024.icns"
+            chmod 644 "$app_dir/Resources/iconJulseview1024.icns"
+        fi
+    fi
+    
+    # Create Info.plist
+    cat > "$app_dir/Info.plist" << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>JulseView-BPandJ</string>
+    <key>CFBundleIdentifier</key>
+    <string>org.sigrok.JulseView.BPandJ</string>
+    <key>CFBundleName</key>
+    <string>JulseView-BPandJ</string>
+    <key>CFBundleDisplayName</key>
+    <string>JulseView BP &amp; J</string>
+    <key>CFBundleVersion</key>
+    <string>1.0.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleIconFile</key>
+    <string>iconJulseview1024.icns</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>10.15</string>
+</dict>
+</plist>
+EOF
+    
+    # Validate the Info.plist
+    if command -v plutil &> /dev/null; then
+        print_status "Validating Info.plist..."
+        if plutil -lint "$app_dir/Info.plist" >/dev/null 2>&1; then
+            print_success "Info.plist is valid"
+        else
+            print_error "Info.plist validation failed"
+            plutil -lint "$app_dir/Info.plist"
+        fi
+    fi
+    
+    # Bundle Qt libraries
+    if command -v macdeployqt &> /dev/null; then
+        print_status "Bundling Qt libraries..."
+        macdeployqt "$app_name"
+    fi
+    
+    # Fix macOS "damaged app" issues
+    print_status "Fixing macOS app permissions and signing..."
+    
+    # Remove quarantine attributes
+    xattr -dr com.apple.quarantine "$app_name" 2>/dev/null || true
+    
+    # Set proper permissions
+    chmod -R 755 "$app_name"
+    chmod +x "$app_name/Contents/MacOS/JulseView-BPandJ"
+    
+    # Sign the app (ad-hoc signing to avoid "damaged" warnings)
+    if command -v codesign &> /dev/null; then
+        print_status "Code signing the app..."
+        codesign --force --deep --sign - "$app_name" 2>/dev/null || true
+    fi
+    
+    # Force macOS to refresh the icon cache
+    # print_status "Refreshing macOS icon cache..."
+    # sudo find /private/var/folders -name com.apple.dock.iconcache -delete 2>/dev/null || true
+    # sudo find /private/var/folders -name com.apple.iconservices -exec rm -rf {} \; 2>/dev/null || true
+    # killall Dock 2>/dev/null || true
+    # killall Finder 2>/dev/null || true
+    
+    # Install
+    print_status "Installing JulseView-BPandJ.app..."
+    sudo rm -rf "/Applications/JulseView-BPandJ.app"  # Remove old version first
+    sudo cp -R "$app_name" "/Applications/"
+    sudo ln -sf "/Applications/JulseView-BPandJ.app/Contents/MacOS/JulseView-BPandJ" "/usr/local/bin/julseview-bpandj"
+    
+    # Clear quarantine on installed app too
+    sudo xattr -dr com.apple.quarantine "/Applications/JulseView-BPandJ.app" 2>/dev/null || true
+    
+    # Verify the installation
+    if [ -x "/Applications/JulseView-BPandJ.app/Contents/MacOS/JulseView-BPandJ" ]; then
+        print_success "✓ App installed and executable verified"
+    else
+        print_error "App installation failed - executable not found or not executable"
+        exit 1
+    fi
+    
+    print_success "Fast rebuild completed!"
+    
+    # Auto-launch the app
+    print_status "Launching JulseView-BPandJ..."
+    open -a JulseView-BPandJ &
+    
+    print_success "✓ JulseView-BPandJ launched!"
 }
 
 # Check dependencies for building PulseView
@@ -120,12 +391,12 @@ build_libsigrok_fala() {
     print_status "Generating build files..."
     ./autogen.sh
     
-    # Configure with both FALA drivers enabled
-    print_status "Configuring with BP5 and Jumperless FALA drivers..."
+    # Configure with all FALA drivers enabled
+    print_status "Configuring with BP5 and Jumperless Mixed-Signal drivers..."
     ./configure \
         --prefix=/usr/local \
         --enable-bp5-binmode-fala \
-        --enable-jumperless-fala \
+        --enable-jumperless-mixed-signal \
         --disable-all-drivers \
         --enable-demo \
         --enable-fx2lafw \
@@ -143,7 +414,7 @@ build_libsigrok_fala() {
     print_status "Installing libsigrok-falaj..."
     sudo make install
     
-    print_success "LibSigrok-FALA with BP5 and Jumperless drivers installed"
+    print_success "LibSigrok-FALA with BP5, Jumperless FALA, and Jumperless Logic drivers installed"
 }
 
 # Build compatible libsigrokdecode
@@ -177,30 +448,41 @@ build_compatible_libsigrokdecode() {
     print_success "Compatible libsigrokdecode installed"
 }
 
-# Clone PulseView source
-clone_pulseview_fala() {
-    print_header "Cloning PulseView Source"
+# Use local julseview fork
+setup_julseview_source() {
+    print_header "Setting Up JulsView Source"
+    
+    # Check if julseview directory exists
+    if [ ! -d "$JULSEVIEW_DIR" ]; then
+        print_error "JulsView fork not found at: $JULSEVIEW_DIR"
+        print_status "Make sure your julseview fork is in the correct location"
+        exit 1
+    fi
     
     cd "$WORK_DIR"
     
+    # Create a symbolic link or copy the source
     if [ -d "pulseview" ]; then
-        print_status "Updating existing PulseView repository..."
-        cd pulseview
-        git fetch origin
-        git checkout "$PULSEVIEW_BRANCH"
-        git pull origin "$PULSEVIEW_BRANCH"
-        cd ..
-    else
-        print_status "Cloning PulseView repository..."
-        git clone --branch "$PULSEVIEW_BRANCH" "$PULSEVIEW_REPO" pulseview
+        print_status "Removing existing PulseView build directory..."
+        rm -rf pulseview
     fi
     
-    print_success "PulseView source ready"
+    print_status "Creating link to local JulsView fork..."
+    ln -sf "$JULSEVIEW_DIR" pulseview
+    
+    # Verify the source is ready
+    if [ -f "pulseview/CMakeLists.txt" ]; then
+        print_success "JulsView source ready from local fork"
+        print_status "Using source from: $JULSEVIEW_DIR"
+    else
+        print_error "JulsView source appears to be invalid (no CMakeLists.txt found)"
+        exit 1
+    fi
 }
 
-# Configure PulseView build
+# Configure JulsView build
 configure_pulseview() {
-    print_header "Configuring PulseView-BPandJ Build"
+    print_header "Configuring JulsView-BPandJ Build"
     
     cd "$WORK_DIR/pulseview"
     
@@ -215,7 +497,7 @@ configure_pulseview() {
         "-DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX"
         "-DPKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/opt/homebrew/lib/pkgconfig"
         "-DCMAKE_BUILD_TYPE=Release"
-        "-DENABLE_DECODE=OFF"
+        "-DENABLE_DECODE=ON"
     )
     
     if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -228,12 +510,12 @@ configure_pulseview() {
     print_status "Running cmake configuration..."
     cmake .. "${cmake_opts[@]}"
     
-    print_success "PulseView-BPandJ configured"
+    print_success "JulsView-BPandJ configured"
 }
 
-# Build PulseView
+# Build JulsView
 build_pulseview() {
-    print_header "Building PulseView-BPandJ"
+    print_header "Building JulsView-BPandJ"
     
     cd "$WORK_DIR/pulseview/build"
     
@@ -243,7 +525,7 @@ build_pulseview() {
     
     make -j"$cores"
     
-    print_success "PulseView-BPandJ built successfully"
+    print_success "JulsView-BPandJ built successfully"
 }
 
 # Create application bundle (macOS)
@@ -252,12 +534,12 @@ create_app_bundle() {
         return
     fi
     
-    print_header "Creating PulseView-BPandJ.app Bundle"
+    print_header "Creating JulseView-BPandJ.app Bundle"
     
     cd "$WORK_DIR/pulseview/build"
     
     # Create app bundle structure
-    local app_name="PulseView-BPandJ.app"
+    local app_name="JulseView-BPandJ.app"
     local app_dir="$app_name/Contents"
     
     rm -rf "$app_name"
@@ -265,8 +547,33 @@ create_app_bundle() {
     mkdir -p "$app_dir/Frameworks"
     mkdir -p "$app_dir/Resources"
     
-    # Copy executable
-    cp pulseview "$app_dir/MacOS/"
+    # Copy executable with correct name
+    cp pulseview "$app_dir/MacOS/JulseView-BPandJ"
+    chmod +x "$app_dir/MacOS/JulseView-BPandJ"
+    
+    # Copy app icon
+    local icon_source="$SCRIPT_DIR/julseviewIcon/iconJulseview1024.icns"
+    if [ -f "$icon_source" ]; then
+        print_status "Adding app icon..."
+        cp "$icon_source" "$app_dir/Resources/iconJulseview1024.icns"
+        chmod 644 "$app_dir/Resources/iconJulseview1024.icns"
+        print_status "Icon copied and permissions set"
+        # Verify the icon was copied
+        if [ -f "$app_dir/Resources/iconJulseview1024.icns" ]; then
+            local icon_size=$(stat -f%z "$app_dir/Resources/iconJulseview1024.icns" 2>/dev/null || echo "unknown")
+            print_status "Icon file size: $icon_size bytes"
+        fi
+    else
+        print_warning "App icon not found at: $icon_source"
+        print_status "Looking for alternative icon formats..."
+        # Try PNG version and convert if needed
+        local png_source="$SCRIPT_DIR/julseviewIcon/iconJulseview1024.png"
+        if [ -f "$png_source" ] && command -v sips &> /dev/null; then
+            print_status "Converting PNG to ICNS..."
+            sips -s format icns "$png_source" --out "$app_dir/Resources/iconJulseview1024.icns"
+            chmod 644 "$app_dir/Resources/iconJulseview1024.icns"
+        fi
+    fi
     
     # Copy Info.plist
     cat > "$app_dir/Info.plist" << EOF
@@ -275,13 +582,13 @@ create_app_bundle() {
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>pulseview</string>
+    <string>JulseView-BPandJ</string>
     <key>CFBundleIdentifier</key>
-    <string>org.sigrok.PulseView.BPandJ</string>
+    <string>org.sigrok.JulseView.BPandJ</string>
     <key>CFBundleName</key>
-    <string>PulseView-BPandJ</string>
+    <string>JulseView-BPandJ</string>
     <key>CFBundleDisplayName</key>
-    <string>PulseView Bus Pirate & Jumperless</string>
+    <string>JulseView BP &amp; J</string>
     <key>CFBundleVersion</key>
     <string>1.0.0</string>
     <key>CFBundleShortVersionString</key>
@@ -290,11 +597,24 @@ create_app_bundle() {
     <string>APPL</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
+    <key>CFBundleIconFile</key>
+    <string>iconJulseview1024.icns</string>
     <key>LSMinimumSystemVersion</key>
     <string>10.15</string>
 </dict>
 </plist>
 EOF
+    
+    # Validate the Info.plist
+    if command -v plutil &> /dev/null; then
+        print_status "Validating Info.plist..."
+        if plutil -lint "$app_dir/Info.plist" >/dev/null 2>&1; then
+            print_success "Info.plist is valid"
+        else
+            print_error "Info.plist validation failed"
+            plutil -lint "$app_dir/Info.plist"
+        fi
+    fi
     
     # Use macdeployqt to bundle Qt libraries
     if command -v macdeployqt &> /dev/null; then
@@ -304,28 +624,58 @@ EOF
         print_warning "macdeployqt not found - Qt libraries may not be bundled"
     fi
     
+    # Fix macOS "damaged app" issues
+    print_status "Fixing macOS app permissions and signing..."
+    
+    # Remove quarantine attributes
+    xattr -dr com.apple.quarantine "$app_name" 2>/dev/null || true
+    
+    # Set proper permissions
+    chmod -R 755 "$app_name"
+    chmod +x "$app_name/Contents/MacOS/JulseView-BPandJ"
+    
+    # Sign the app (ad-hoc signing to avoid "damaged" warnings)
+    if command -v codesign &> /dev/null; then
+        print_status "Code signing the app..."
+        codesign --force --deep --sign - "$app_name" 2>/dev/null || true
+    fi
+    
+    # Force macOS to refresh the icon cache
+    print_status "Refreshing macOS icon cache..."
+    sudo find /private/var/folders -name com.apple.dock.iconcache -delete 2>/dev/null || true
+    sudo find /private/var/folders -name com.apple.iconservices -exec rm -rf {} \; 2>/dev/null || true
+    killall Dock 2>/dev/null || true
+    killall Finder 2>/dev/null || true
+    
     print_success "Created $app_name"
     print_status "Location: $WORK_DIR/pulseview/build/$app_name"
 }
 
-# Install PulseView
+# Install JulseView
 install_pulseview() {
-    print_header "Installing PulseView-BPandJ"
+    print_header "Installing JulseView-BPandJ"
     
     cd "$WORK_DIR/pulseview/build"
     
-    if [[ "$OSTYPE" == "darwin"* ]] && [ -d "PulseView-BPandJ.app" ]; then
-        print_status "Installing PulseView-BPandJ.app to /Applications..."
-        sudo cp -R "PulseView-BPandJ.app" "/Applications/"
-        print_success "PulseView-BPandJ.app installed to Applications"
+    if [[ "$OSTYPE" == "darwin"* ]] && [ -d "JulseView-BPandJ.app" ]; then
+        print_status "Installing JulseView-BPandJ.app to /Applications..."
+        
+        # Remove old version first
+        sudo rm -rf "/Applications/JulseView-BPandJ.app"
+        sudo cp -R "JulseView-BPandJ.app" "/Applications/"
+        
+        # Clear quarantine on installed app
+        sudo xattr -dr com.apple.quarantine "/Applications/JulseView-BPandJ.app" 2>/dev/null || true
+        
+        print_success "JulseView-BPandJ.app installed to Applications"
         
         # Create a symbolic link for easy command line access
-        sudo ln -sf "/Applications/PulseView-BPandJ.app/Contents/MacOS/pulseview" "/usr/local/bin/pulseview-bpandj"
-        print_status "Created symlink: /usr/local/bin/pulseview-bpandj"
+        sudo ln -sf "/Applications/JulseView-BPandJ.app/Contents/MacOS/JulseView-BPandJ" "/usr/local/bin/julseview-bpandj"
+        print_status "Created symlink: /usr/local/bin/julseview-bpandj"
     else
-        print_status "Installing PulseView binary..."
+        print_status "Installing JulseView binary..."
         sudo make install
-        print_success "PulseView-BPandJ installed to $INSTALL_PREFIX"
+        print_success "JulseView-BPandJ installed to $INSTALL_PREFIX"
     fi
 }
 
@@ -333,22 +683,22 @@ install_pulseview() {
 test_installation() {
     print_header "Testing Installation"
     
-    if [[ "$OSTYPE" == "darwin"* ]] && [ -d "/Applications/PulseView-BPandJ.app" ]; then
-        print_status "Testing PulseView-BPandJ.app..."
+    if [[ "$OSTYPE" == "darwin"* ]] && [ -d "/Applications/JulseView-BPandJ.app" ]; then
+        print_status "Testing JulseView-BPandJ.app..."
         print_status "Available drivers should include:"
         echo "  - bp5-binmode-fala (Bus Pirate V5+ FALA)"
-        echo "  - jumperless-fala (Jumperless FALA)"
+        echo "  - jumperless-mixed-signal (Jumperless Mixed-Signal)"
         echo ""
         print_status "Testing driver availability..."
-        if command -v pulseview-bpandj &> /dev/null; then
-            pulseview-bpandj --driver-list | grep -E "(bp5-binmode-fala|jumperless-fala)" || true
+        if command -v julseview-bpandj &> /dev/null; then
+            julseview-bpandj --driver-list | grep -E "(bp5-binmode-fala|jumperless-mixed-signal)" || true
         fi
-        print_success "✓ PulseView-BPandJ.app ready for testing"
-        print_status "Launch with: open -a PulseView-BPandJ"
+        print_success "✓ JulseView-BPandJ.app ready for testing"
+        print_status "Launch with: open -a JulseView-BPandJ"
     else
         print_status "Testing pulseview binary..."
         if command -v pulseview &> /dev/null; then
-            pulseview --driver-list | grep -E "(bp5-binmode-fala|jumperless-fala)" || true
+            pulseview --driver-list | grep -E "(bp5-binmode-fala|jumperless-mixed-signal)" || true
             print_success "✓ PulseView binary available"
         else
             print_warning "? PulseView binary not found in PATH"
@@ -376,13 +726,15 @@ clean_build() {
 
 # Usage information
 usage() {
-    echo "Build PulseView-BPandJ with Bus Pirate and Jumperless FALA Support"
+    echo "Build JulsView-BPandJ with Bus Pirate and Jumperless FALA Support"
+    echo "Uses local julseview fork instead of cloning PulseView"
     echo ""
     echo "Usage: $0 [command]"
     echo ""
     echo "Commands:"
     echo "  deps       - Install build dependencies"
     echo "  build      - Full build process"
+    echo "  rebuild    - Fast rebuild: auto-save, close app, build, install & launch"
     echo "  install    - Install after building"
     echo "  clean      - Clean build directory"
     echo "  test       - Test installation"
@@ -391,11 +743,15 @@ usage() {
     echo "Examples:"
     echo "  $0 deps      # Install dependencies first"
     echo "  $0 build     # Complete build process"
+    echo "  $0 rebuild   # Quick rebuild from local changes (recommended)"
     echo "  $0 install   # Install the built app"
     echo ""
-    echo "The built app will support both:"
+    echo "Prerequisites:"
+    echo "  - julseview fork must be at: ../../julseview/"
+    echo ""
+    echo "The built app will support:"
     echo "  - Bus Pirate V5+ FALA (bp5-binmode-fala driver)"
-    echo "  - Jumperless FALA (jumperless-fala driver)"
+    echo "  - Jumperless Mixed-Signal (jumperless-mixed-signal driver)"
 }
 
 # Install dependencies
@@ -427,21 +783,27 @@ case "${1:-build}" in
         install_deps
         ;;
     build)
+        cache_sudo
+        close_existing_app
+        save_all_files
         check_dependencies
         setup_build_env
         build_libsigrok_fala
         build_compatible_libsigrokdecode
-        clone_pulseview_fala
+        setup_julseview_source
         configure_pulseview
         build_pulseview
         create_app_bundle
         print_success "Build completed! Run '$0 install' to install."
         ;;
+    rebuild)
+        fast_rebuild
+        ;;
     install)
         install_pulseview
         test_installation
         print_success "Installation completed!"
-        print_status "Launch with: open -a PulseView-BPandJ"
+        print_status "Launch with: open -a JulseView-BPandJ"
         ;;
     clean)
         clean_build
