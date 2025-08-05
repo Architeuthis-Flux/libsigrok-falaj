@@ -307,11 +307,11 @@ src_libdrivers_la_SOURCES += \
 	src/hardware/bp5-binmode-fala/protocol.c \
 	src/hardware/bp5-binmode-fala/api.c
 endif
-if HW_JUMPERLESS_MIXED_SIGNAL
+if HW_JUMPERLESS
 src_libdrivers_la_SOURCES += \
-	src/hardware/jumperless-mixed-signal/protocol.h \
-	src/hardware/jumperless-mixed-signal/protocol.c \
-	src/hardware/jumperless-mixed-signal/api.c
+	src/hardware/jumperless/protocol.h \
+	src/hardware/jumperless/protocol.c \
+	src/hardware/jumperless/api.c
 endif
 if HW_CEM_DT_885X
 src_libdrivers_la_SOURCES += \

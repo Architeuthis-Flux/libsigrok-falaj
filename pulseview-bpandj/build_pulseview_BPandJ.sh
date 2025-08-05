@@ -120,6 +120,7 @@ fast_rebuild() {
         --prefix=/usr/local \
         --enable-bp5-binmode-fala \
         --enable-jumperless-mixed-signal \
+        --enable-jumperless \
         --disable-all-drivers \
         --enable-demo \
         --enable-fx2lafw \
@@ -395,9 +396,10 @@ build_libsigrok_fala() {
     print_status "Configuring with BP5 and Jumperless Mixed-Signal drivers..."
     ./configure \
         --prefix=/usr/local \
-        --enable-bp5-binmode-fala \
-        --enable-jumperless-mixed-signal \
-        --disable-all-drivers \
+               --enable-bp5-binmode-fala \
+               --enable-raspberrrypi-pico \
+       --enable-jumperless \
+       --disable-all-drivers \
         --enable-demo \
         --enable-fx2lafw \
         --enable-dreamsourcelab-dslogic \
@@ -687,18 +689,19 @@ test_installation() {
         print_status "Testing JulseView-BPandJ.app..."
         print_status "Available drivers should include:"
         echo "  - bp5-binmode-fala (Bus Pirate V5+ FALA)"
-        echo "  - jumperless-mixed-signal (Jumperless Mixed-Signal)"
+        # echo "  - jumperless-mixed-signal (Jumperless Mixed-Signal)"
+        echo "  - jumperless (Jumperless V5 Logic Analyzer)"
         echo ""
         print_status "Testing driver availability..."
         if command -v julseview-bpandj &> /dev/null; then
-            julseview-bpandj --driver-list | grep -E "(bp5-binmode-fala|jumperless-mixed-signal)" || true
+            julseview-bpandj --driver-list | grep -E "(bp5-binmode-fala|jumperless-mixed-signal|jumperless)" || true
         fi
         print_success "✓ JulseView-BPandJ.app ready for testing"
         print_status "Launch with: open -a JulseView-BPandJ"
     else
         print_status "Testing pulseview binary..."
         if command -v pulseview &> /dev/null; then
-            pulseview --driver-list | grep -E "(bp5-binmode-fala|jumperless-mixed-signal)" || true
+            pulseview --driver-list | grep -E "(bp5-binmode-fala|jumperless-mixed-signal|jumperless)" || true
             print_success "✓ PulseView binary available"
         else
             print_warning "? PulseView binary not found in PATH"
