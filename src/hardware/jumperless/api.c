@@ -24,6 +24,7 @@
  #include <string.h>
  #include <strings.h>
  #include <unistd.h>
+
  #include <libsigrok/libsigrok.h>
  #include "libsigrok-internal.h"
  #include "protocol.h"
@@ -98,6 +99,48 @@ static const char *get_channel_name(int channel_index, char channel_type);
 static int get_total_channels(void);
 static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
  
+ /* Static variables to store user configuration during session */
+ static uint32_t saved_analog_mask = 0;
+ static uint32_t saved_digital_mask = 0;
+ static uint32_t saved_control_mask = 0;
+ static gboolean config_initialized = FALSE;
+ 
+ /* Load saved analog channel mask */
+ static uint32_t load_saved_analog_mask(void)
+ {
+     if (!config_initialized) {
+         return 0;  /* Use defaults on first load */
+     }
+     return saved_analog_mask;
+ }
+ 
+ /* Load saved digital channel mask */
+ static uint32_t load_saved_digital_mask(void)
+ {
+     if (!config_initialized) {
+         return 0;  /* Use defaults on first load */
+     }
+     return saved_digital_mask;
+ }
+ 
+ /* Load saved control channel mask */
+ static uint32_t load_saved_control_mask(void)
+ {
+     if (!config_initialized) {
+         return 0;  /* Use defaults on first load */
+     }
+     return saved_control_mask;
+ }
+ 
+ /* Save channel masks */
+ static void save_channel_masks(uint32_t analog_mask, uint32_t digital_mask, uint32_t control_mask)
+ {
+     saved_analog_mask = analog_mask;
+     saved_digital_mask = digital_mask;
+     saved_control_mask = control_mask;
+     config_initialized = TRUE;
+ }
+ 
  static struct sr_dev_driver jumperless_driver_info;
  
  static GSList *scan(struct sr_dev_driver *di, GSList * options)
@@ -143,7 +186,7 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
     
     /* Retry opening port with backoff to handle "Resource busy" errors */
     int retry_count = 0;
-    int max_retries = 1;
+    int max_retries = 0;
     while (retry_count < max_retries) {
         if (serial_open(serial, SERIAL_RDWR) == SR_OK) {
             sr_dbg("Successfully opened port %s on attempt %d", conn, retry_count + 1);
@@ -316,9 +359,18 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
      devc->num_a_channels = num_a;
      devc->num_d_channels = num_d;
      devc->num_c_channels = num_c;
-     devc->a_chan_mask = ((1 << num_a) - 1);
-     devc->d_chan_mask = ((1 << num_d) - 1);
-     devc->c_chan_mask = 0;  // Start with no control channels enabled
+     /* Load saved configuration or use defaults */
+     devc->a_chan_mask = load_saved_analog_mask();
+     devc->d_chan_mask = load_saved_digital_mask();
+     devc->c_chan_mask = load_saved_control_mask();
+     
+     /* If no saved configuration exists, use defaults */
+     if (devc->a_chan_mask == 0) {
+         devc->a_chan_mask = ((1 << JULSEVIEW_DEFAULT_ANALOG_CHANNELS) - 1);
+     }
+     if (devc->d_chan_mask == 0) {
+         devc->d_chan_mask = ((1 << JULSEVIEW_DEFAULT_DIGITAL_CHANNELS) - 1);
+     }
  
      /* The number of bytes that each digital sample in the buffers sent to the
       * session. All logical channels are packed together, where a slice of N
@@ -345,7 +397,9 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
      for (i = 0; i < 8; i++) {
          /* Use names from global channel mapping */
          channel_name = g_strdup(channel_names[i + 8][0]);  /* Digital channels start at index 8 */
-         ch = sr_channel_new(sdi, i, SR_CHANNEL_LOGIC, i < devc->num_d_channels, channel_name);  // Enable only configured channels, index 8-15
+         /* Enable channels based on saved configuration */
+         gboolean enabled = (devc->d_chan_mask >> i) & 1;
+         ch = sr_channel_new(sdi, i, SR_CHANNEL_LOGIC, enabled, channel_name);
          devc->digital_groups[0]->channels = g_slist_append(devc->digital_groups[0]->channels, ch);
          g_free(channel_name);
      }
@@ -360,7 +414,9 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
      for (i = 0; i < 8; i++) {
          /* Use names from global channel mapping */
          channel_name = g_strdup(channel_names[i][0]);  /* Analog channels start at index 0 */
-         ch = sr_channel_new(sdi, i, SR_CHANNEL_ANALOG, i < devc->num_a_channels, channel_name);  // Enable only configured channels, index 0-7
+         /* Enable channels based on saved configuration */
+         gboolean enabled = (devc->a_chan_mask >> i) & 1;
+         ch = sr_channel_new(sdi, i, SR_CHANNEL_ANALOG, enabled, channel_name);
          devc->analog_groups[0]->channels = g_slist_append(devc->analog_groups[0]->channels, ch);
          g_free(channel_name);
      }
@@ -408,7 +464,7 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
       * doesn't service CDC serial responses in time to not overflow the internal
       * CDC buffers.	Thus no serial buffer is large enough.
       * But, it's only 32K... */
-     devc->serial_buffer_size = 64000;
+     devc->serial_buffer_size = 128000; /* Increased from 64000 for better high-speed performance */
      devc->buffer = NULL;
      sr_dbg("Setting serial buffer size: %i.", devc->serial_buffer_size);
  
@@ -645,6 +701,9 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
          sr_info("Channel enable masks D 0x%X A 0x%X C 0x%X",
              devc->d_chan_mask, devc->a_chan_mask, devc->c_chan_mask);
          
+         /* Save the updated configuration */
+         save_channel_masks(devc->a_chan_mask, devc->d_chan_mask, devc->c_chan_mask);
+         
          /* Send serial command for all analog/digital channels, but only enabled control channels */
          if (channel_type != 0 && (channel_type != 'C' || ch->enabled)) {
              int channel_number = get_channel_number(ch->name);
@@ -767,13 +826,32 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
       * A single  "*" indicates success.
       * A "*" with subsequent data is success, but allows for the device to
       * print something to the error console without aborting.
-      * A non "*" in the first character blocks the start. */
+      * A non "*" in the first character blocks the start.
+      * The firmware now also sends the decimation factor in the format "*<factor>". */
      sprintf(tmpstr, "R%" PRIu64 "\n", devc->sample_rate);
      num_read = send_serial_w_resp(serial, tmpstr, buf, 30);
      buf[num_read] = 0;
-     if ((num_read > 1) && (buf[0] == '*'))
+     if ((num_read > 1) && (buf[0] == '*')) {
          sr_dbg("Sample rate to device success with resp %s", buf);
-     else if (!((num_read == 1) && (buf[0] == '*'))) {
+         
+         /* Parse decimation factor from response */
+         if (num_read > 1) {
+             char *decimation_str = buf + 1; /* Skip the '*' */
+             int decimation_factor = atoi(decimation_str);
+                                if (decimation_factor > 0) {
+                       devc->analog_decimation_factor = decimation_factor;
+                       devc->decimation_mode_active = (decimation_factor > 1);
+                       devc->analog_sample_index = 0; // Reset analog sample index for new capture
+                       sr_info("Received decimation factor from firmware: %d (mode: %s)", 
+                               decimation_factor, devc->decimation_mode_active ? "active" : "normal");
+                   } else {
+                       devc->analog_decimation_factor = 1;
+                       devc->decimation_mode_active = FALSE;
+                       devc->analog_sample_index = 0; // Reset analog sample index for new capture
+                       sr_info("No decimation factor received, using normal mode");
+                   }
+         }
+     } else if (!((num_read == 1) && (buf[0] == '*'))) {
          sr_err("Sample rate to device failed");
          if (num_read > 0) {
              buf[num_read]=0;
@@ -916,8 +994,8 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
  
          sr_info("Entering sw triggered mode");
          /* Post the receive before starting the device to ensure we are ready
-          * to receive data ASAP */
-         serial_source_add(sdi->session, serial, G_IO_IN, 200,
+          * to receive data ASAP - optimized for high-speed data transmission */
+         serial_source_add(sdi->session, serial, G_IO_IN, 50, /* Reduced from 200ms to 50ms for faster response */
              raspberrypi_pico_receive, (void*)sdi);
  
          sprintf(tmpstr, "F\n");
@@ -928,7 +1006,7 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
          devc->trigger_fired = TRUE;
          devc->pretrig_entries = 0;
          sr_info("Entering fixed sample mode");
-         serial_source_add(sdi->session, serial, G_IO_IN, 200,
+         serial_source_add(sdi->session, serial, G_IO_IN, 50, /* Reduced from 200ms to 50ms for faster response */
              raspberrypi_pico_receive, (void*)sdi);
  
          sprintf(tmpstr, "F\n");

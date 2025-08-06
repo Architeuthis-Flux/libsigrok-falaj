@@ -217,131 +217,6 @@
      }
  }
  
- /* Process incoming data stream and forward to trigger processing with
-  * process_group
-  * The final value of ser_rdptr indicates how many bytes were processed.
-  * This version handles all other enabled channel configurations that
-  * Process_D4 doesn't */
-//  void process_slice(struct sr_dev_inst *sdi, struct dev_context *devc)
-//  {
-//      int32_t i;
-//      uint32_t tmp32, cword;
-//      uint8_t cbyte;
-//      uint32_t slice_bytes;	/* Number of bytes that have legal slice values including RLE */
- 
-//      /* Only process legal data values for this mode which are 0x32-0x7F for RLE and 0x80 to 0xFF for data*/
-//      for (slice_bytes = 1; (slice_bytes < devc->bytes_avail)
-//          && (devc->buffer[slice_bytes - 1] >= 0x30); slice_bytes++);
- 
-//      if (slice_bytes != devc->bytes_avail) {
-//          cbyte = devc->buffer[slice_bytes - 1];
-//          slice_bytes--;	/* Don't process the ending character */
-//          if (cbyte == '$') {
-//              sr_info("Data stream stops with cbyte %d char %c rdidx %d sbytes %d cnt %lu",
-//                  cbyte, cbyte, devc->ser_rdptr, slice_bytes, devc->byte_cnt);
-//              devc->rxstate = RX_STOPPED;
-//          } else {
-//              sr_err("Data stream aborts with cbyte %d char %c rdidx %d sbytes %d cnt %lu",
-//                  cbyte, cbyte, devc->ser_rdptr, slice_bytes, devc->byte_cnt);
-//              devc->rxstate = RX_ABORT;
-//          }
-//      }
- 
-//      /* If the wrptr is non-zero due to a residual from the previous serial
-//       * transfer, don't double count it towards byte_cnt*/
-//      devc->byte_cnt += slice_bytes - (devc->wrptr);
- 
-//      sr_spew("process slice avail %d rdptr %d sb %d byte_cnt %" PRIu64 "",
-//          devc->bytes_avail, devc->ser_rdptr, slice_bytes, devc->byte_cnt);
- 
-//      /* Must have a full slice or one rle byte */
-//      while (((devc->ser_rdptr + devc->bytes_per_slice) <= slice_bytes)
-//          || ((devc->ser_rdptr < slice_bytes) &&
-//              (devc->buffer[devc->ser_rdptr] < 0x80))) {
- 
-//      if (devc->buffer[devc->ser_rdptr] < 0x80) {
-//          int16_t rlecnt;
-//          if (devc->buffer[devc->ser_rdptr] <= 79)
-//              rlecnt = devc->buffer[devc->ser_rdptr] - 47;
-//          else
-//              rlecnt = (devc->buffer[devc->ser_rdptr] - 78) * 32;
- 
-//          sr_info("RLEcnt of %d in %d", rlecnt, devc->buffer[devc->ser_rdptr]);
-//          if ((rlecnt < 1) || (rlecnt > 1568))
-//              sr_err("Bad rlecnt val %d in %d",
-//                  rlecnt, devc->buffer[devc->ser_rdptr]);
-//          else
-//              rle_memset(devc,rlecnt);
- 
-//          devc->ser_rdptr++;
- 
-//      } else {
-//          cword = 0;
-//          /* Build up a word 7 bits at a time, using only enabled channels */
-//          for (i = 0; i < devc->num_d_channels; i += 7) {
-//              if (((devc->d_chan_mask) >> i) & 0x7F) {
-//                  cword |= ((devc->buffer[devc->ser_rdptr]) & 0x7F) << i;
-//                  (devc->ser_rdptr)++;
-//              }
-//          }
-//          /* And then distribute 8 bits at a time to all possible channels
-//           * but first save of cword for rle */
-//          devc->d_last[0] =  cword        & 0xFF;
-//          devc->d_last[1] = (cword >> 8)  & 0xFF;
-//          devc->d_last[2] = (cword >> 16) & 0xFF;
-//          devc->d_last[3] = (cword >> 24) & 0xFF;
- 
-//          for (i = 0; i < devc->num_d_channels; i += 8) {
-//              uint32_t idx = ((devc->cbuf_wrptr) * devc->dig_sample_bytes) +
-//                  (i >> 3);
-//              devc->d_data_buf[idx] = cword & 0xFF;
-//              sr_spew("Dchan i %d wrptr %d idx %d char 0x%X cword 0x%X",
-//                  i, devc->cbuf_wrptr, idx, devc->d_data_buf[idx], cword);
-//              cword >>= 8;
-//          }
- 
-//          /* Each analog value is one or more 7 bit values */
-//          for (i = 0; i < devc->num_a_channels; i++) {
-//              if ((devc->a_chan_mask >> i) & 1) {
- 
-//                  tmp32 =
-//                      devc->buffer[devc->ser_rdptr] - 0x80;
-//                  for(int a=1;a<devc->a_size;a++){
-//                                      tmp32+=(devc->buffer[(devc->ser_rdptr)+a] - 0x80)<<(7*a);
-//                                  }
-//                  devc->a_data_bufs[i][devc->cbuf_wrptr] =
-//                      ((float) tmp32 * devc->a_scale[i]) +
-//                      devc->a_offset[i];
-//                  devc->a_last[i] =
-//                      devc->a_data_bufs[i][devc->cbuf_wrptr];
-//                  sr_spew
-//                      ("AChan %d t32 %d value %f wrptr %d rdptr %d sc %f off %f",
-//                       i, tmp32,
-//                       devc->
-//                       a_data_bufs[i][devc->cbuf_wrptr],
-//                       devc->cbuf_wrptr, devc->ser_rdptr,
-//                       devc->a_scale[i], devc->a_offset[i]);
-//                  devc->ser_rdptr+=devc->a_size;
-//              }	/*if channel enabled*/
-//          }		/*for num_a_channels*/
-//          devc->cbuf_wrptr++;
-//        }/*Not an RLE */
-//             /*RLEs can create a large number of samples relative to the incoming serial buffer
-//             To prevent overflow of the sample data buffer we call process_group.
-//             cbuf_wrptr and sample_buf_size are both in terms of slices
-//             2048 is more than needed for a max rle of 1640 on the next incoming character */
-//             if((devc->cbuf_wrptr +2048) >  devc->sample_buf_size){
-//                sr_spew("Drain large buff %d %d\n\r",devc->cbuf_wrptr,devc->sample_buf_size);
-//                process_group(sdi, devc, devc->cbuf_wrptr);
- 
-//             }
-//      }/* While another slice or RLE available */
-//      if (devc->cbuf_wrptr){
-//          process_group(sdi, devc, devc->cbuf_wrptr);
-//      }
- 
-//  }
- 
 
 
 void process_slice(struct sr_dev_inst *sdi, struct dev_context *devc)
@@ -404,25 +279,48 @@ void process_slice(struct sr_dev_inst *sdi, struct dev_context *devc)
             cword >>= 8;
         }
 
-        for (i = 0; i < devc->num_a_channels; i++) {
-            if ((devc->a_chan_mask >> i) & 1) {
-                // Handle 12-bit analog data (2 bytes)
-                if (devc->a_size == 2) {
-                    // Subtract base offset 0x30 that firmware adds for protocol compliance
-                    uint8_t byte1 = (devc->buffer[devc->ser_rdptr] - 0x30) & 0x7F;
-                    uint8_t byte2 = (devc->buffer[devc->ser_rdptr + 1] - 0x30) & 0x7F;
-                    tmp32 = byte1 | (byte2 << 7);
-                } else { // Fallback for 8-bit
-                    tmp32 = (devc->buffer[devc->ser_rdptr] - 0x30) & 0x7F;
+        /* Process analog data with decimation support */
+        if (devc->decimation_mode_active) {
+            // In decimation mode, determine if this sample should have analog data based on decimation factor
+            if (devc->analog_sample_index % devc->analog_decimation_factor == 0) {
+                // This sample should have analog data - check if it's available
+                uint32_t analog_bytes_needed = __builtin_popcount(devc->a_chan_mask) * devc->a_size;
+                if ((devc->ser_rdptr + analog_bytes_needed) <= devc->bytes_avail) {
+                    // Analog data is available - process it
+                    // sr_dbg("Processing analog data at sample %d (index %d, factor %d)", 
+                        //    devc->cbuf_wrptr, devc->analog_sample_index, devc->analog_decimation_factor);
+                    process_decimated_analog_sample(sdi, devc);
+                } else {
+                    // Expected analog data but not available - this indicates a protocol error
+                    // sr_err("ERROR: Expected analog data at sample %d (index %d) but buffer insufficient", 
+                        //    devc->cbuf_wrptr, devc->analog_sample_index);
+                    // Fall back to duplication to prevent crash
+                    for (int i = 0; i < devc->num_a_channels; i++) {
+                        if ((devc->a_chan_mask >> i) & 1) {
+                            devc->a_data_bufs[i][devc->cbuf_wrptr] = devc->a_last_decimated[i];
+                            devc->a_last[i] = devc->a_last_decimated[i];
+                        }
+                    }
+                    devc->analog_sample_index++;
                 }
-
-                devc->a_data_bufs[i][devc->cbuf_wrptr] =
-                    ((float) tmp32 * devc->a_scale[i]) +
-                    devc->a_offset[i];
-                devc->a_last[i] =
-                    devc->a_data_bufs[i][devc->cbuf_wrptr];
-                devc->ser_rdptr += devc->a_size;
-            }
+                         } else {
+                 // This sample should NOT have analog data - duplicate previous values
+                //  sr_dbg("Duplicating analog data at sample %d (index %d, factor %d)", 
+                        // devc->cbuf_wrptr, devc->analog_sample_index, devc->analog_decimation_factor);
+                 for (int i = 0; i < devc->num_a_channels; i++) {
+                     if ((devc->a_chan_mask >> i) & 1) {
+                         devc->a_data_bufs[i][devc->cbuf_wrptr] = devc->a_last_decimated[i];
+                         devc->a_last[i] = devc->a_last_decimated[i];
+                     }
+                 }
+                 devc->analog_sample_index++;
+                 if (devc->analog_sample_index % 100 == 0) {
+                     sr_dbg("DECIMATION PROGRESS: analog_sample_index = %d", devc->analog_sample_index);
+                 }
+             }
+        } else {
+            // Normal mode - always process analog data
+            process_decimated_analog_sample(sdi, devc);
         }
         devc->cbuf_wrptr++;
       }
@@ -827,16 +725,23 @@ void process_slice(struct sr_dev_inst *sdi, struct dev_context *devc)
      /* Fill the buffer, note the end may have partial slices */
      bytes_rem = devc->serial_buffer_size - devc->wrptr;
  
-     /* Read one byte less so that we can null it and print as a string. Do a
-      * small 10ms timeout, if we get nothing, we'll always come back again */
+     /* Optimized reading for high-speed data transmission:
+      * - Use larger read sizes when possible
+      * - Reduce timeout to 1ms for faster response
+      * - Read one byte less so that we can null it and print as a string */
+     uint32_t read_size = bytes_rem - 1;
+     if (read_size > 1024) {
+         read_size = 1024; /* Limit read size for better responsiveness */
+     }
+     
      len = serial_read_blocking(serial, &(devc->buffer[devc->wrptr]),
-         bytes_rem - 1, 10);
+         read_size, 1); /* Reduced timeout from 10ms to 1ms */
      sr_spew("Entry wrptr %u bytes_rem %u len %d", devc->wrptr, bytes_rem, len);
  
      if (len > 0) {
          devc->buffer[devc->wrptr + len] = 0;
          /* Add the "#" so that spaces in the string are clearly seen */
-         sr_dbg("rx string %s#", devc->buffer);
+        //  sr_dbg("rx string %s#", devc->buffer);
          devc->bytes_avail = (devc->wrptr + len);
          sr_spew("rx len %d bytes_avail %ul sent_samples %ul wrptr %u",
              len, devc->bytes_avail, devc->sent_samples, devc->wrptr);
@@ -941,6 +846,87 @@ void process_slice(struct sr_dev_inst *sdi, struct dev_context *devc)
  }
  
  /* Read device specific information from the device */
+ /* Calculate decimation factor based on sample rate and analog channel count */
+ SR_PRIV void calculate_decimation_factor(struct dev_context *devc)
+ {
+     uint32_t total_analog_rate = devc->sample_rate * __builtin_popcount(devc->a_chan_mask);
+     
+     if (total_analog_rate > JULSEVIEW_ADC_MAX_RATE) {
+         devc->decimation_mode_active = TRUE;
+         
+         /* Calculate decimation factor (how many digital samples per analog sample) */
+         devc->analog_decimation_factor = (total_analog_rate + JULSEVIEW_ADC_MAX_RATE - 1) / JULSEVIEW_ADC_MAX_RATE; /* Round up */
+         
+         /* Clamp to reasonable limits */
+         if (devc->analog_decimation_factor < JULSEVIEW_DECIMATION_MIN_FACTOR) {
+             devc->analog_decimation_factor = JULSEVIEW_DECIMATION_MIN_FACTOR;
+         }
+         if (devc->analog_decimation_factor > JULSEVIEW_DECIMATION_MAX_FACTOR) {
+             devc->analog_decimation_factor = JULSEVIEW_DECIMATION_MAX_FACTOR;
+         }
+         
+         sr_info("DECIMATION ENABLED: sample_rate=%" PRIu64 " Hz × %d channels = %d Hz > %d Hz total ADC limit",
+                 devc->sample_rate, __builtin_popcount(devc->a_chan_mask), total_analog_rate, JULSEVIEW_ADC_MAX_RATE);
+         sr_info("DECIMATION FACTOR: %d (each analog sample duplicated %d times)",
+                 devc->analog_decimation_factor, devc->analog_decimation_factor);
+         
+         /* Calculate actual ADC sample rate per channel */
+         uint32_t actual_adc_rate_per_channel = (devc->sample_rate * __builtin_popcount(devc->a_chan_mask)) / devc->analog_decimation_factor / __builtin_popcount(devc->a_chan_mask);
+         sr_info("ACTUAL ADC RATE: %d Hz per channel (digital at %" PRIu64 " Hz)",
+                 actual_adc_rate_per_channel, devc->sample_rate);
+         
+     } else {
+         devc->decimation_mode_active = FALSE;
+         devc->analog_decimation_factor = 1;
+         
+         uint32_t max_rate_per_channel = JULSEVIEW_ADC_MAX_RATE / __builtin_popcount(devc->a_chan_mask);
+         sr_info("NORMAL MODE: sample_rate=%" PRIu64 " Hz × %d channels = %d Hz <= %d Hz total ADC limit",
+                 devc->sample_rate, __builtin_popcount(devc->a_chan_mask), total_analog_rate, JULSEVIEW_ADC_MAX_RATE);
+         sr_info("NORMAL MODE: max rate per channel = %d Hz", max_rate_per_channel);
+     }
+     
+     /* Initialize decimation tracking */
+     devc->analog_sample_index = 0;
+     for (int i = 0; i < MAX_ANALOG_CHANNELS; i++) {
+         devc->a_last_decimated[i] = 0.0f;
+     }
+     sr_info("DECIMATION INIT: analog_sample_index reset to 0");
+ }
+
+ /* Process analog sample with decimation support */
+ SR_PRIV void process_decimated_analog_sample(struct sr_dev_inst *sdi, struct dev_context *devc)
+ {
+     // Process actual analog data from firmware (both normal and decimation modes)
+     for (int i = 0; i < devc->num_a_channels; i++) {
+         if ((devc->a_chan_mask >> i) & 1) {
+             // Handle 12-bit analog data (2 bytes)
+             uint32_t tmp32;
+             if (devc->a_size == 2) {
+                 // Subtract base offset 0x30 that firmware adds for protocol compliance
+                 uint8_t byte1 = (devc->buffer[devc->ser_rdptr] - 0x30) & 0x7F;
+                 uint8_t byte2 = (devc->buffer[devc->ser_rdptr + 1] - 0x30) & 0x7F;
+                 tmp32 = byte1 | (byte2 << 7);
+             } else { // Fallback for 8-bit
+                 tmp32 = (devc->buffer[devc->ser_rdptr] - 0x30) & 0x7F;
+             }
+
+             float analog_value = ((float) tmp32 * devc->a_scale[i]) + devc->a_offset[i];
+             devc->a_data_bufs[i][devc->cbuf_wrptr] = analog_value;
+             devc->a_last[i] = analog_value;
+             
+             if (devc->decimation_mode_active) {
+                 devc->a_last_decimated[i] = analog_value; // Store for duplication
+             }
+             
+             devc->ser_rdptr += devc->a_size;
+         }
+     }
+     
+     if (devc->decimation_mode_active) {
+         devc->analog_sample_index++;
+     }
+ }
+
  SR_PRIV int raspberrypi_pico_get_dev_cfg(const struct sr_dev_inst *sdi)
  {
      struct dev_context *devc;

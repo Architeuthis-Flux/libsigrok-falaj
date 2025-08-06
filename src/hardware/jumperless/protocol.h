@@ -38,7 +38,17 @@
  #define MAX_ANALOG_CHANNELS 8
  #define MAX_DIGITAL_CHANNELS 8
  #define MAX_CONTROL_CHANNELS 16
- 
+
+ #define JULSEVIEW_DEFAULT_ANALOG_CHANNELS 5
+ #define JULSEVIEW_DEFAULT_DIGITAL_CHANNELS 8
+ #define JULSEVIEW_DEFAULT_CONTROL_CHANNELS 0
+ #define JULSEVIEW_DEFAULT_CHANNEL_MASK 0x00011111
+
+ /* Decimation configuration constants */
+ #define JULSEVIEW_ADC_MAX_RATE 200000  // Maximum safe ADC sample rate (200kHz total)
+ #define JULSEVIEW_DECIMATION_MIN_FACTOR 1  // Minimum decimation factor
+ #define JULSEVIEW_DECIMATION_MAX_FACTOR 100  // Maximum decimation factor
+
  /* Digits input to sr_analog_init */
  #define ANALOG_DIGITS 4
  
@@ -134,19 +144,29 @@ SR_PRIV int update_control_channel_name(struct sr_dev_inst *sdi, int channel_ind
      /* Size of packet data buffers for each channel */
      uint32_t sample_buf_size;
  
-     /* RLE related*/
-     /* Previous sample values to duplicate for rle */
-     float a_last[MAX_ANALOG_CHANNELS];
-     uint8_t d_last[4];
- 
-     /* SW trigger related */
-     struct soft_trigger_logic *stl;
-     /* Maximum number of entries to store pre-trigger */
-     uint32_t pretrig_entries;
-     /* Analog pre-trigger storage for software based triggering
-      * because sw based only has internal storage for logic */
-     float *a_pretrig_bufs[MAX_ANALOG_CHANNELS];
-     uint32_t pretrig_wr_ptr;
+      /* RLE related*/
+ /* Previous sample values to duplicate for rle */
+ float a_last[MAX_ANALOG_CHANNELS];
+ uint8_t d_last[4];
+
+ /* Decimation support */
+ /* Decimation factor for analog samples (1 = no decimation) */
+ uint32_t analog_decimation_factor;
+ /* Current analog sample index for decimation tracking */
+ uint32_t analog_sample_index;
+ /* Last analog sample values for duplication during decimation */
+ float a_last_decimated[MAX_ANALOG_CHANNELS];
+ /* Flag indicating if decimation mode is active */
+ gboolean decimation_mode_active;
+
+ /* SW trigger related */
+ struct soft_trigger_logic *stl;
+ /* Maximum number of entries to store pre-trigger */
+ uint32_t pretrig_entries;
+ /* Analog pre-trigger storage for software based triggering
+  * because sw based only has internal storage for logic */
+ float *a_pretrig_bufs[MAX_ANALOG_CHANNELS];
+ uint32_t pretrig_wr_ptr;
  };
  
  SR_PRIV int raspberrypi_pico_receive(int fd, int revents, void *cb_data);
@@ -164,6 +184,10 @@ SR_PRIV int update_control_channel_name(struct sr_dev_inst *sdi, int channel_ind
      uint32_t num_slices);
  void rle_memset(struct dev_context *devc, uint32_t num_slices);
  SR_PRIV int check_marker(struct dev_context *d, int *len);
+
+ /* Decimation support functions */
+ SR_PRIV void calculate_decimation_factor(struct dev_context *devc);
+ SR_PRIV void process_decimated_analog_sample(struct sr_dev_inst *sdi, struct dev_context *devc);
  
  
  #endif
