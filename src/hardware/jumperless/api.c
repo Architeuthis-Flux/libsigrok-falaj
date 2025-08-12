@@ -29,6 +29,8 @@
  #include "libsigrok-internal.h"
  #include "protocol.h"
  
+ #define LOG_PREFIX "api"
+ 
  #define SERIALCOMM "115200/8n1/dtr=1/rts=0/flow=0"
  
  static const uint32_t scanopts[] = {
@@ -38,12 +40,11 @@
  };
  
  static const uint64_t samplerates[] = {
-     SR_KHZ(1), SR_KHZ(5), SR_KHZ(6), SR_KHZ(8), SR_KHZ(10), SR_KHZ(20), SR_KHZ(30), SR_KHZ(40),
-     SR_KHZ(50), SR_KHZ(60), SR_KHZ(80), SR_KHZ(100), SR_KHZ(125), SR_KHZ(150),
-     SR_KHZ(160), SR_KHZ(200), SR_KHZ(250), SR_KHZ(300), SR_KHZ(400), SR_KHZ(500),
-     SR_KHZ(600), SR_KHZ(800),
-     SR_MHZ(1), SR_MHZ(1.2), SR_MHZ(1.5), SR_MHZ(2), SR_MHZ(2.4), SR_MHZ(3),
-     SR_MHZ(4), SR_MHZ(5), SR_MHZ(6), SR_MHZ(8), SR_MHZ(10), SR_MHZ(15),
+     SR_HZ(1), SR_HZ(10), SR_HZ(100), SR_HZ(500), SR_KHZ(1), SR_KHZ(5), SR_KHZ(10), SR_KHZ(20),  
+     SR_KHZ(50),  SR_KHZ(100), SR_KHZ(200),
+      SR_KHZ(400), SR_KHZ(800), 
+     SR_MHZ(1),  SR_MHZ(2), 
+      SR_MHZ(4), SR_MHZ(8)
     
  };
  
@@ -103,13 +104,15 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
  static uint32_t saved_analog_mask = 0;
  static uint32_t saved_digital_mask = 0;
  static uint32_t saved_control_mask = 0;
+ static uint64_t saved_sample_rate = 0;
+ static uint64_t saved_limit_samples = 0;
  static gboolean config_initialized = FALSE;
  
  /* Load saved analog channel mask */
  static uint32_t load_saved_analog_mask(void)
  {
      if (!config_initialized) {
-         return 0;  /* Use defaults on first load */
+         return 0xffffffff;  /* Use defaults on first load */
      }
      return saved_analog_mask;
  }
@@ -118,7 +121,7 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
  static uint32_t load_saved_digital_mask(void)
  {
      if (!config_initialized) {
-         return 0;  /* Use defaults on first load */
+         return 0xffffffff;  /* Use defaults on first load */
      }
      return saved_digital_mask;
  }
@@ -127,17 +130,43 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
  static uint32_t load_saved_control_mask(void)
  {
      if (!config_initialized) {
-         return 0;  /* Use defaults on first load */
+         return 0xffffffff;  /* Use defaults on first load */
      }
      return saved_control_mask;
  }
  
- /* Save channel masks */
+ /* Load saved sample rate */
+ static uint64_t load_saved_sample_rate(void)
+ {
+     if (!config_initialized) {
+         return 0xffffffff;  /* Use defaults on first load */
+     }
+     return saved_sample_rate;
+ }
+ 
+ /* Load saved sample count */
+ static uint64_t load_saved_limit_samples(void)
+ {
+     if (!config_initialized) {
+         return 0xffffffff;  /* Use defaults on first load */
+     }
+     return saved_limit_samples;
+ }
+ 
+ /* Save channel masks and timing parameters */
  static void save_channel_masks(uint32_t analog_mask, uint32_t digital_mask, uint32_t control_mask)
  {
      saved_analog_mask = analog_mask;
      saved_digital_mask = digital_mask;
      saved_control_mask = control_mask;
+     config_initialized = TRUE;
+ }
+ 
+ /* Save timing parameters */
+ static void save_timing_params(uint64_t sample_rate, uint64_t limit_samples)
+ {
+     saved_sample_rate = sample_rate;
+     saved_limit_samples = limit_samples;
      config_initialized = TRUE;
  }
  
@@ -183,7 +212,8 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
         serialcomm = SERIALCOMM;
 
     serial = sr_serial_dev_inst_new(conn, serialcomm);
-    
+
+
     /* Retry opening port with backoff to handle "Resource busy" errors */
     int retry_count = 0;
     int max_retries = 0;
@@ -270,8 +300,11 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
         d_start = &buf[12];  /* Should be at position 12 */
     }
     
-    /* Find the 'D' separator more robustly */
+        /* Find the 'D' separator more robustly */
     char *d_pos = strchr(buf, 'D');
+    int original_num_a = 0;
+    int original_a_size = 0;
+    
     if (d_pos && d_pos > a_start) {
         sr_dbg("Full response: '%s'", buf);
         sr_dbg("Analog part starts at position %ld: '%.8s'", a_start - buf, a_start);
@@ -283,10 +316,27 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
             temp_buf[1] = a_start[2];  /* Second digit */
             temp_buf[2] = '\0';
             num_a = atoi(temp_buf);
+            original_num_a = num_a;
             a_size = a_start[3] - '0';  /* 4th digit is bytes per sample */
+            original_a_size = a_size;
+            
+            sr_dbg("Parsed analog: channels=%d, bytes_per_sample=%d", num_a, a_size);
+            sr_dbg("Raw characters: a_start[1]='%c', a_start[2]='%c', a_start[3]='%c'", 
+                   a_start[1], a_start[2], a_start[3]);
+            
+            /* Validate the parsed values and provide better error messages */
+            if (num_a > 20) {  /* More reasonable upper limit before clamping */
+                sr_warn("Firmware reported suspiciously high analog channel count (%d) - this may indicate a firmware bug", num_a);
+            }
+            if (a_size > 10) {  /* More reasonable upper limit before clamping */
+                sr_warn("Firmware reported suspiciously high analog sample size (%d bytes) - this may indicate a firmware bug", a_size);
+            }
         } else {
             num_a = atoi(a_start + 1);  /* Skip 'A' for fallback too */
+            original_num_a = num_a;
             a_size = 2;
+            original_a_size = a_size;
+            sr_dbg("Fallback parsing: channels=%d, bytes_per_sample=%d", num_a, a_size);
         }
         
         /* Parse digital channels more robustly - find the comma or end */
@@ -306,6 +356,9 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
         }
         sr_dbg("Digital part: '%s', parsed num_d=%d", d_pos + 1, num_d);
         sr_dbg("Parsed: num_a=%d, num_d=%d, a_size=%d", num_a, num_d, a_size);
+    sr_info("DEVICE REPORTED: %d analog channels (%d bytes each), %d digital channels", num_a, a_size, num_d);
+    sr_dbg("Raw firmware response: '%s'", buf);
+    sr_dbg("Parsed values: num_a=%d, a_size=%d, num_d=%d", num_a, a_size, num_d);
     } else {
         sr_warn("Could not parse channel counts from '%s', using defaults", buf);
         num_a = 5;  /* Default Jumperless values */
@@ -335,12 +388,12 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
     }
     
     if (num_a > MAX_ANALOG_CHANNELS) {
-        sr_warn("Too many analog channels (%d), clamping to %d", num_a, MAX_ANALOG_CHANNELS);
+        sr_warn("Too many analog channels (%d), clamping to %d (firmware may have a bug)", num_a, MAX_ANALOG_CHANNELS);
         num_a = MAX_ANALOG_CHANNELS;
     }
     
     if (num_d > MAX_DIGITAL_CHANNELS) {
-        sr_warn("Too many digital channels (%d), clamping to %d", num_d, MAX_DIGITAL_CHANNELS);
+        sr_warn("Too many digital channels (%d), clamping to %d (firmware may have a bug)", num_d, MAX_DIGITAL_CHANNELS);
         num_d = MAX_DIGITAL_CHANNELS;
     }
     
@@ -348,11 +401,17 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
     int num_c = MAX_CONTROL_CHANNELS;  // Create all possible control channels, user can enable them later
     
     if (a_size < 1 || a_size > 4) {
-        sr_warn("Invalid analog size (%d), defaulting to 2", a_size);
+        sr_warn("Invalid analog size (%d), defaulting to 2 (firmware may have a bug)", a_size);
         a_size = 2;
     }
     
     sr_info("Final channel config: %d analog (%d bytes each), %d digital, %d control", num_a, a_size, num_d, num_c);
+    
+    /* If we had to clamp values, provide a summary */
+    if (num_a != original_num_a || a_size != original_a_size) {
+        sr_warn("Channel configuration was adjusted due to firmware reporting invalid values");
+        sr_warn("Expected format: SRJLV5,A%%02d2D%%02d,02 (e.g., SRJLV5,A052D08,02)");
+    }
  
      devc = g_malloc0(sizeof(struct dev_context));
      devc->a_size = a_size;
@@ -363,13 +422,24 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
      devc->a_chan_mask = load_saved_analog_mask();
      devc->d_chan_mask = load_saved_digital_mask();
      devc->c_chan_mask = load_saved_control_mask();
+     devc->sample_rate = load_saved_sample_rate();
+     devc->limit_samples = load_saved_limit_samples();
      
      /* If no saved configuration exists, use defaults */
-     if (devc->a_chan_mask == 0) {
+     if (devc->a_chan_mask == 0xffffffff) {
          devc->a_chan_mask = ((1 << JULSEVIEW_DEFAULT_ANALOG_CHANNELS) - 1);
      }
-     if (devc->d_chan_mask == 0) {
+     if (devc->d_chan_mask == 0xffffffff) {
          devc->d_chan_mask = ((1 << JULSEVIEW_DEFAULT_DIGITAL_CHANNELS) - 1);
+     }
+     if (devc->c_chan_mask == 0xffffffff) {
+         devc->c_chan_mask = ((1 << JULSEVIEW_DEFAULT_CONTROL_CHANNELS) - 1);
+     }
+     if (devc->sample_rate == 0xffffffff) {
+         devc->sample_rate = 10000;  /* Default 10KHz sample rate */
+     }
+     if (devc->limit_samples == 0xffffffff) {
+         devc->limit_samples = 5000;  /* Default 5K samples */
      }
  
      /* The number of bytes that each digital sample in the buffers sent to the
@@ -377,17 +447,34 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
       * channels takes roundup(N/8) bytes. This never changes even if channels
       * are disabled because PV expects disabled channels to still be accounted
       * for in the packing */
-     devc->dig_sample_bytes = ((devc->num_d_channels + 7) / 8);
+     /* Note: This is now handled below for 7-bit protocol compatibility */
      /* These are the slice sizes of the data on the wire
       * 1 7 bit field per byte */
      devc->bytes_per_slice = (devc->num_a_channels * devc->a_size);
  
-     if (devc->num_d_channels > 0) {
-         /* logic sent in groups of 7*/
-         devc->bytes_per_slice += (devc->num_d_channels + 6) / 7;
-     }
-     sr_dbg("num channels a %d d %d bps %d dsb %d", num_a, num_d,
-         devc->bytes_per_slice, devc->dig_sample_bytes);
+         if (devc->num_d_channels > 0) {
+        /* logic sent in groups of 7, but check for control channels */
+        if (devc->num_d_channels > 8 || devc->c_chan_mask != 0) {
+            devc->bytes_per_slice += 3;  // 16 channels or control channels enabled = 3 bytes
+        } else {
+            devc->bytes_per_slice += 2;  // 8 channels = 2 bytes
+        }
+    }
+     
+     /* For 16 channels, we need to handle the 7-bit protocol correctly */
+    if (devc->num_d_channels > 8 || devc->c_chan_mask != 0) {
+        /* 16 channels: 3 bytes transmitted (21 bits), 2 bytes stored (16 bits) */
+        devc->dig_sample_bytes = 2;  // Store as 2 bytes (16 bits)
+        devc->num_d_channels = 16;  // Ensure reported digital channels is 16
+    } else {
+        /* 8 channels: 2 bytes transmitted (14 bits), 1 byte stored (8 bits) */
+        devc->dig_sample_bytes = 1;  // Store as 1 byte (8 bits)
+        devc->num_d_channels = 8;   // Ensure reported digital channels is 8
+    }
+         sr_dbg("num channels a %d d %d bps %d dsb %d", num_a, num_d,
+        devc->bytes_per_slice, devc->dig_sample_bytes);
+    sr_info("BYTES_PER_SLICE CALCULATION: analog=%d*%d=%d, digital=(%d+6)/7=%d, total=%d", 
+            num_a, a_size, num_a * a_size, num_d, (num_d + 6) / 7, devc->bytes_per_slice);
            /* Create one digital group containing all digital channels */
      devc->digital_groups = g_malloc0(sizeof(struct sr_channel_group *));
      devc->digital_groups[0] = g_malloc0(sizeof(struct sr_channel_group));
@@ -423,48 +510,35 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
      sdi->channel_groups = g_slist_append(sdi->channel_groups, devc->analog_groups[0]);
  
 
-     /* Create control channels in 2 groups of 8 channels each */
-     devc->control_groups = g_malloc0(sizeof(struct sr_channel_group *) * 2);
+    /* Create control channels in 1 group of 8 channels (digital-only) */
+    devc->control_groups = g_malloc0(sizeof(struct sr_channel_group *) * 1);
      
-     /* Control Group 1: C0-C7 */
+    /* Control Group 1: C0-C7 */
      devc->control_groups[0] = g_malloc0(sizeof(struct sr_channel_group));
      devc->control_groups[0]->name = g_strdup("Digital Control Channels");
      devc->control_groups[0]->channels = NULL;
      
      for (i = 0; i < 8; i++) {
          /* Use names from global channel mapping */
-         channel_name = g_strdup(channel_names[i + 16][0]);  /* Digital control channels start at index 16 */
-         ch = sr_channel_new(sdi, i , SR_CHANNEL_LOGIC, FALSE, channel_name);  // Start disabled, index 16-23 - use ANALOG to avoid overlap with digital channels
+        channel_name = g_strdup(channel_names[i + 16][0]);  /* Use control channel names */
+        /* Enable channels based on saved configuration */
+        gboolean enabled = (devc->c_chan_mask >> i) & 1;
+        /* Map control channels into logic indices 8..15 so the 16-bit logic word matches channel indices */
+        ch = sr_channel_new(sdi, i + 8, SR_CHANNEL_LOGIC, enabled, channel_name);
          devc->control_groups[0]->channels = g_slist_append(devc->control_groups[0]->channels, ch);
          g_free(channel_name);
      }
      sdi->channel_groups = g_slist_append(sdi->channel_groups, devc->control_groups[0]);
      
-     /* Control Group 2: C8-C15 */
-     devc->control_groups[1] = g_malloc0(sizeof(struct sr_channel_group));
-     devc->control_groups[1]->name = g_strdup("Analog Control Channels");
-     devc->control_groups[1]->channels = NULL;
-     
-     for (i = 8; i < 16; i++) {
-         /* Use names from global channel mapping */
-         channel_name = g_strdup(channel_names[i + 16][0]);  /* Analog control channels start at index 16+8=24 */
-         ch = sr_channel_new(sdi, i , SR_CHANNEL_ANALOG, FALSE, channel_name);  // Start disabled, index 24-31
-         devc->control_groups[1]->channels = g_slist_append(devc->control_groups[1]->channels, ch);
-         g_free(channel_name);
-     }
-     sdi->channel_groups = g_slist_append(sdi->channel_groups, devc->control_groups[1]);
+    /* No analog control channels; control data are 8 digital bits */
  
-     /* In large sample usages we get the call to receive with large transfers.
-      * Since the CDC serial implemenation can silenty lose data as it gets close
-      * to full, allocate storage for a half buffer which in a worst case
-      * scenario has 2x ratio of transmitted bytes to storage bytes.
-      * Note: The intent of making this buffer large is to prevent CDC serial
-      * buffer overflows. However, it is likely that if the host is running slow
-      * (i.e. it's a raspberry pi model 3) that it becomes compute bound and
-      * doesn't service CDC serial responses in time to not overflow the internal
-      * CDC buffers.	Thus no serial buffer is large enough.
-      * But, it's only 32K... */
-     devc->serial_buffer_size = 128000; /* Increased from 64000 for better high-speed performance */
+         /* STREAMING BUFFER OPTIMIZATION: Large buffer for high-speed data streaming
+     * Since the CDC serial implementation can silently lose data as it gets close
+     * to full, allocate storage for high-speed streaming scenarios.
+     * The large buffer provides more headroom for burst data transmission
+     * and reduces the frequency of buffer management operations.
+     * For 500kHz sampling at 2 bytes/sample = 1MB/s, this provides ~256ms of buffering */
+    devc->serial_buffer_size = 256000; /* DOUBLED: 256KB for maximum streaming performance */
      devc->buffer = NULL;
      sr_dbg("Setting serial buffer size: %i.", devc->serial_buffer_size);
  
@@ -483,11 +557,9 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
          devc->a_pretrig_bufs[i] = NULL;
      }
      devc->d_data_buf = NULL;
-     devc->sample_rate = 10000;
-     devc->capture_ratio = 10;
+     /* Keep previously loaded sample_rate/limit_samples; fall back elsewhere if zero */
+     devc->capture_ratio = 0;
      devc->rxstate = RX_IDLE;
-     /*Set an initial value as various code relies on an inital value. */
-     devc->limit_samples = 5000;
  
      sdi->priv = devc;
  
@@ -523,10 +595,12 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
      case SR_CONF_SAMPLERATE:
          devc->sample_rate = g_variant_get_uint64(data);
          sr_dbg("config_set sr %" PRIu64 "\n", devc->sample_rate);
+         save_timing_params(devc->sample_rate, devc->limit_samples);
          break;
      case SR_CONF_LIMIT_SAMPLES:
          devc->limit_samples = g_variant_get_uint64(data);
          sr_dbg("config_set slimit %" PRIu64 "\n", devc->limit_samples);
+         save_timing_params(devc->sample_rate, devc->limit_samples);
          break;
      case SR_CONF_CAPTURE_RATIO:
          // Pre-trigger capture disabled - ignore any attempts to set capture ratio
@@ -561,7 +635,11 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
      devc = sdi->priv;
      switch (key) {
      case SR_CONF_SAMPLERATE:
-         *data = g_variant_new_uint64(devc->sample_rate);
+      /* Return default if unset */
+      if (devc->sample_rate == 0)
+          *data = g_variant_new_uint64(10000);
+      else
+          *data = g_variant_new_uint64(devc->sample_rate);
          sr_spew("sample rate get of %" PRIu64 "", devc->sample_rate);
          break;
      case SR_CONF_CAPTURE_RATIO:
@@ -569,8 +647,12 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
          *data = g_variant_new_uint64(0);
          break;
      case SR_CONF_LIMIT_SAMPLES:
-         sr_spew("config_get limit_samples of %" PRIu64 "", devc->limit_samples);
-         *data = g_variant_new_uint64(devc->limit_samples);
+      /* Return default if unset */
+      if (devc->limit_samples == 0)
+          *data = g_variant_new_uint64(10000);
+      else
+          *data = g_variant_new_uint64(devc->limit_samples);
+      sr_spew("config_get limit_samples of %" PRIu64 "", devc->limit_samples);
          break;
      case SR_CONF_CONTROL_CHANNELS:
          *data = g_variant_new_int32(devc->num_c_channels);
@@ -619,6 +701,7 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
           * and users that pick huge values deserve what they get.
           * But setting this limit to prevent really crazy things. */
          *data = std_gvar_tuple_u64(1LL, 1000000000LL);
+
          break;
      case SR_CONF_CONTROL_CHANNELS:
          /* Control channels range from 0 to MAX_CONTROL_CHANNELS */
@@ -682,21 +765,24 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
                  a_enabled++;
              }
          }
-         else if (channel_type == 'D') {
-             /* Convert driver index (8-15) to firmware index (0-7) */
-             int firmware_index = ch->index - 8;
-             devc->d_chan_mask &= ~(1 << firmware_index);
-             if (ch->enabled) {
-                 devc->d_chan_mask |= (1 << firmware_index);
-                 d_enabled++;
-             }
-         } else if (channel_type == 'C') {
-             devc->c_chan_mask &= ~(1 << ch->index);
-             if (ch->enabled) {
-                 devc->c_chan_mask |= (1 << ch->index);
-                 // Control channels don't count toward enabled total for data processing
-             }
-         }
+        else if (channel_type == 'D') {
+            /* Digital GPIO channels use indices 0..7 directly */
+            int firmware_index = ch->index;  /* 0..7 */
+            devc->d_chan_mask &= ~(1 << firmware_index);
+            if (ch->enabled) {
+                devc->d_chan_mask |= (1 << firmware_index);
+                d_enabled++;
+            }
+        } else if (channel_type == 'C') {
+            /* Control channels are mapped into logic indices 8..15; control index is 0..7 */
+            int control_index = ch->index - 8;  /* 8..15 -> 0..7 */
+            if (control_index < 0) control_index = 0;
+            if (control_index > 7) control_index = 7;
+            devc->c_chan_mask &= ~(1 << control_index);
+            if (ch->enabled) {
+                devc->c_chan_mask |= (1 << control_index);
+            }
+        }
  
          sr_info("Channel enable masks D 0x%X A 0x%X C 0x%X",
              devc->d_chan_mask, devc->a_chan_mask, devc->c_chan_mask);
@@ -737,19 +823,41 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
  
          /* Note: Digital channel continuity check removed - firmware handles this automatically */
  
-     /* Recalculate bytes_per_slice based on which analog channels are enabled */
-     devc->bytes_per_slice = (a_enabled * devc->a_size);
- 
-     for (i = 0; i < devc->num_d_channels; i += 7)
-         if (((devc->d_chan_mask) >> i) & (0x7F))
-             (devc->bytes_per_slice)++;
+        /* Recalculate bytes_per_slice based on enabled channels */
+    devc->bytes_per_slice = (a_enabled * devc->a_size);
+
+    /* Add digital bytes - check for control channels to determine format */
+    if (d_enabled > 0) {
+        if (devc->num_d_channels > 8 || devc->c_chan_mask != 0) {
+            devc->bytes_per_slice += 3;  // 16 channels or control channels enabled = 3 bytes
+        } else {
+            devc->bytes_per_slice += 2;  // 8 channels = 2 bytes
+        }
+    }
+
+    /* Ensure digital storage size and reported digital channel count match control usage */
+    if (d_enabled > 0) {
+        if (devc->c_chan_mask != 0) {
+            devc->num_d_channels = 16;           /* GPIO (8) + Control (8) */
+            devc->dig_sample_bytes = 2;          /* store 16 bits per sample */
+        } else {
+            devc->num_d_channels = 8;            /* GPIO only */
+            devc->dig_sample_bytes = 1;          /* store 8 bits per sample */
+        }
+    } else {
+        devc->dig_sample_bytes = 0;
+    }
  
      if ((a_enabled == 0) && (d_enabled == 0)) {
          sr_dbg("No channels enabled - this is normal if device is not ready");
          return SR_ERR;
      }
  
-     sr_dbg("bps %d\n", devc->bytes_per_slice);
+    sr_dbg("bps %d\n", devc->bytes_per_slice);
+    sr_info("ACQ START: bytes_per_slice=%d, dig_sample_bytes=%d, num_d_channels=%d (analog=%d*%d=%d, digital=%d bytes)",
+            devc->bytes_per_slice, devc->dig_sample_bytes, devc->num_d_channels,
+            a_enabled, devc->a_size, a_enabled * devc->a_size,
+            (d_enabled > 0) ? ((devc->num_d_channels > 8 || devc->c_chan_mask != 0) ? 3 : 2) : 0);
  
      /* Apply sample rate limits; while earlier versions forced a lower sample
       * rate, the PICO seems to allow ADC overclocking, and by not enforcing
@@ -764,34 +872,34 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
  
      /* Depending on channel configs, rates below 5ksps are possible but such a
       * low rate can easily stream and this eliminates a lot	of special cases. */
-     if (devc->sample_rate < 500) {
-         sr_dbg("Sample rate adjusted to minimum of 5ksps");
-         devc->sample_rate = 500;
-     }
+    //  if (devc->sample_rate < 500) {
+    //      sr_dbg("Sample rate adjusted to minimum of 500sps");
+    //      devc->sample_rate = 500;
+    //  }
  
      /* While PICO specs a max clock ~120-125Mhz, it does overclock in many cases
       * so leaving a warning. */
-     if (devc->sample_rate > 120000000)
-         sr_warn("WARN: Sample rate above 120Msps");
+     if (devc->sample_rate > 150000000)
+         sr_warn("WARN: Sample rate above 150Msps");
  
      /* It may take a very large number of samples to notice, but if digital and
       * analog are enabled and either PIO or ADC are fractional the samples will
-      * skew over time. 24Mhz is the max common divisor to the 120Mhz and 48Mhz
+      * skew over time. 24Mhz is the max common divisor to the 150Mhz and 48Mhz
       * ADC clock so force an integer divisor to 24Mhz. */
-     if ((a_enabled > 0) && (d_enabled > 0)) {
-         if (24000000ULL % (devc->sample_rate)) {
-             uint32_t commondivint = 24000000ULL / (devc->sample_rate);
-             /* Always increment the divisor so that we go down in frequency to
-              * avoid max sample rate issues */
-             commondivint++;
-             devc->sample_rate = 24000000ULL / commondivint;
-             /* Make sure the divisor increment didn't make us go too low. */
-             if (devc->sample_rate < 500)
-                 devc->sample_rate = 500;
-             sr_warn("WARN: Forcing common integer divisor sample rate of " \
-                 "%" PRIu64 " div %u", devc->sample_rate, commondivint);
-         }
-     }
+    //  if ((a_enabled > 0) && (d_enabled > 0)) {
+    //      if (24000000ULL % (devc->sample_rate)) {
+    //          uint32_t commondivint = 24000000ULL / (devc->sample_rate);
+    //          /* Always increment the divisor so that we go down in frequency to
+    //           * avoid max sample rate issues */
+    //          commondivint++;
+    //          devc->sample_rate = 24000000ULL / commondivint;
+    //          /* Make sure the divisor increment didn't make us go too low. */
+    //          if (devc->sample_rate < 1)
+    //              devc->sample_rate = 1;
+    //          sr_warn("WARN: Forcing common integer divisor sample rate of " \
+    //              "%" PRIu64 " div %u", devc->sample_rate, commondivint);
+    //      }
+    //  }
  
      /* If we are only digital or only analog print a warning that the fractional
       * divisors aren't a true PLL fractional feedback loop and thus could have
@@ -804,7 +912,7 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
          sr_warn("WARN: Non integer ADC divisor of 48Mhz clock for sample " \
              "rate %" PRIu64 " may cause sample to sample variability.",
              devc->sample_rate);
-     if ((d_enabled > 0) && (120000000ULL % (devc->sample_rate)))
+     if ((d_enabled > 0) && (150000000ULL % (devc->sample_rate)))
          sr_warn("WARN: Non integer PIO divisor of 120Mhz for sample rate " \
              "%" PRIu64 " may cause sample to sample variability.", devc->sample_rate);
  
@@ -838,16 +946,14 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
          if (num_read > 1) {
              char *decimation_str = buf + 1; /* Skip the '*' */
              int decimation_factor = atoi(decimation_str);
-                                if (decimation_factor > 0) {
-                       devc->analog_decimation_factor = decimation_factor;
-                       devc->decimation_mode_active = (decimation_factor > 1);
-                       devc->analog_sample_index = 0; // Reset analog sample index for new capture
-                       sr_info("Received decimation factor from firmware: %d (mode: %s)", 
-                               decimation_factor, devc->decimation_mode_active ? "active" : "normal");
-                   } else {
-                       devc->analog_decimation_factor = 1;
-                       devc->decimation_mode_active = FALSE;
-                       devc->analog_sample_index = 0; // Reset analog sample index for new capture
+                                                if (decimation_factor > 0) {
+                      devc->analog_decimation_factor = decimation_factor;
+                      devc->decimation_mode_active = (decimation_factor > 1);
+                      sr_info("Received decimation factor from firmware: %d (mode: %s)", 
+                              decimation_factor, devc->decimation_mode_active ? "active" : "normal");
+                  } else {
+                      devc->analog_decimation_factor = 1;
+                      devc->decimation_mode_active = FALSE;
                        sr_info("No decimation factor received, using normal mode");
                    }
          }
@@ -992,22 +1098,22 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
              }
          }
  
-         sr_info("Entering sw triggered mode");
-         /* Post the receive before starting the device to ensure we are ready
-          * to receive data ASAP - optimized for high-speed data transmission */
-         serial_source_add(sdi->session, serial, G_IO_IN, 50, /* Reduced from 200ms to 50ms for faster response */
-             raspberrypi_pico_receive, (void*)sdi);
+                 sr_info("Entering sw triggered mode");
+        /* Post the receive before starting the device to ensure we are ready
+         * to receive data ASAP - AGGRESSIVE optimization for high-speed streaming */
+        serial_source_add(sdi->session, serial, G_IO_IN, 10, /* AGGRESSIVE: 10ms for maximum streaming performance */
+            raspberrypi_pico_receive, (void*)sdi);
  
          sprintf(tmpstr, "F\n");
          if (send_serial_str(serial, tmpstr) != SR_OK)
              return SR_ERR;
  
      } else {
-         devc->trigger_fired = TRUE;
-         devc->pretrig_entries = 0;
-         sr_info("Entering fixed sample mode");
-         serial_source_add(sdi->session, serial, G_IO_IN, 50, /* Reduced from 200ms to 50ms for faster response */
-             raspberrypi_pico_receive, (void*)sdi);
+                 devc->trigger_fired = TRUE;
+        devc->pretrig_entries = 0;
+        sr_info("Entering fixed sample mode");
+        serial_source_add(sdi->session, serial, G_IO_IN, 10, /* AGGRESSIVE: 10ms for maximum streaming performance */
+            raspberrypi_pico_receive, (void*)sdi);
  
          sprintf(tmpstr, "F\n");
          if (send_serial_str(serial, tmpstr) != SR_OK)
@@ -1051,8 +1157,17 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
          sr_err("Reached dev_acquisition_stop in RX_ACTIVE");
  
      if (devc->rxstate != RX_IDLE) {
-         sr_err("Sending plus to stop device stream");
-         send_serial_char(serial, '+');
+         uint64_t current_time = g_get_monotonic_time();
+         uint64_t time_since_last = current_time - devc->last_stop_command_time;
+         
+         /* Rate limit: only send + command every 250ms */
+         if (time_since_last >= 250000) { /* 250ms in microseconds */
+             sr_err("Sending plus to stop device stream");
+             send_serial_char(serial, '+');
+             devc->last_stop_command_time = current_time;
+         } else {
+             sr_dbg("Rate limiting + command (last sent %llu us ago)", (unsigned long long)time_since_last);
+         }
      }
  
      /* In case we get calls to receive force it to exit */
@@ -1167,6 +1282,9 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels)
     
     /* Update device context */
     devc->c_chan_mask = ((1 << num_channels) - 1);
+    
+    /* Save the updated control channel mask */
+    save_channel_masks(devc->a_chan_mask, devc->d_chan_mask, devc->c_chan_mask);
     
     /* Enable/disable control channels based on the mask */
     for (i = 0; i < devc->num_c_channels; i++) {

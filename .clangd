@@ -11,10 +11,40 @@ CompileFlags:
     - "-I/opt/homebrew/opt/gettext/include"
     - "-I/opt/homebrew/Cellar/pcre2/10.45/include"
     
-    # libsigrok project includes
+    # libsigrok project includes - comprehensive coverage
     - "-I."
     - "-Iinclude"
     - "-Isrc"
+    - "-Isrc/hardware"
+    - "-Isrc/hardware/jumperless"
+    - "-I/Users/kevinsanto/Documents/GitHub/libsigrok-falaj"
+    - "-I/Users/kevinsanto/Documents/GitHub/libsigrok-falaj/src"
+    - "-Isrc/input"
+    - "-Isrc/output"
+    - "-Isrc/transform"
+    - "-Isrc/scale"
+    - "-Isrc/lcr"
+    - "-Isrc/dmm"
+    - "-Isrc/bt"
+    - "-Isrc/modbus"
+    - "-Isrc/scpi"
+    - "-Isrc/minilzo"
+    
+    # Additional libsigrok internal paths
+    - "-Iinclude/libsigrok"
+    - "-Isrc/hardware/agilent-dmm"
+    - "-Isrc/hardware/appa-55ii"
+    - "-Isrc/hardware/arachnid-labs-re-load-pro"
+    - "-Isrc/hardware/asix-omega-rtm-cli"
+    - "-Isrc/hardware/asix-sigma"
+    - "-Isrc/hardware/atorch"
+    - "-Isrc/hardware/atten-pps3xxx"
+    - "-Isrc/hardware/baylibre-acme"
+    - "-Isrc/hardware/beaglelogic"
+    - "-Isrc/hardware/bkprecision-1856d"
+    - "-Isrc/hardware/bp5-binmode-fala"
+    - "-Isrc/hardware/cem-dt-885x"
+    - "-Isrc/hardware/center-3xx"
     
     # pkg-config style includes for dependencies
     - "-I/usr/local/include/libzip"
@@ -22,6 +52,8 @@ CompileFlags:
     - "-I/usr/local/include/libftdi1"
     - "-I/opt/homebrew/include/libusb-1.0"
     - "-I/opt/homebrew/include/libzip"
+    - "-I/opt/homebrew/Cellar/hidapi/0.15.0/include/hidapi"
+    - "-I/opt/homebrew/Cellar/libftdi/1.5_2/include/libftdi1"
     
     # Standard library paths
     - "-I/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include"
@@ -38,6 +70,14 @@ CompileFlags:
     - "-DHAVE_JUMPERLESS_FALA"
     - "-DHAVE_JUMPERLESS_LOGIC"
     
+    # Additional libsigrok feature defines
+    - "-DHAVE_LIBUSB_1_0"
+    - "-DHAVE_LIBSERIALPORT"
+    - "-DHAVE_LIBHIDAPI"
+    - "-DHAVE_LIBFTDI"
+    - "-DHAVE_LIBZIP"
+    - "-DHAVE_BLUETOOTH"
+    
     # C standard
     - "-std=c99"
     
@@ -49,6 +89,7 @@ CompileFlags:
     - "-Wno-unused-variable"
     - "-Wno-unused-function"
     - "-Wno-missing-field-initializers"
+    - "-Wno-unused-command-line-argument"
 
 ---
 Diagnostics:

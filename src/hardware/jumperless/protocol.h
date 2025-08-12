@@ -26,7 +26,7 @@
  #include "libsigrok-internal.h"
  
  /* This is used by sr_dbg/log etc to indicate where a printout came from */
- #define LOG_PREFIX "srpico"
+ #define LOG_PREFIX "protocol"
  
  /* Number of bytes between markers */
  #define MRK_STRIDE 128
@@ -35,14 +35,14 @@
   * elements may be only 32 bits wide. Setting values larger than what a PICO can
   * support to enable other devices, or possibly modes where channels are created
   * from internal values rather than external pins */
- #define MAX_ANALOG_CHANNELS 8
+ #define MAX_ANALOG_CHANNELS 9
  #define MAX_DIGITAL_CHANNELS 8
  #define MAX_CONTROL_CHANNELS 16
 
- #define JULSEVIEW_DEFAULT_ANALOG_CHANNELS 5
+ #define JULSEVIEW_DEFAULT_ANALOG_CHANNELS 4
  #define JULSEVIEW_DEFAULT_DIGITAL_CHANNELS 8
  #define JULSEVIEW_DEFAULT_CONTROL_CHANNELS 0
- #define JULSEVIEW_DEFAULT_CHANNEL_MASK 0x00011111
+ #define JULSEVIEW_DEFAULT_CHANNEL_MASK 0x00001111
 
  /* Decimation configuration constants */
  #define JULSEVIEW_ADC_MAX_RATE 200000  // Maximum safe ADC sample rate (200kHz total)
@@ -149,15 +149,13 @@ SR_PRIV int update_control_channel_name(struct sr_dev_inst *sdi, int channel_ind
  float a_last[MAX_ANALOG_CHANNELS];
  uint8_t d_last[4];
 
- /* Decimation support */
- /* Decimation factor for analog samples (1 = no decimation) */
- uint32_t analog_decimation_factor;
- /* Current analog sample index for decimation tracking */
- uint32_t analog_sample_index;
- /* Last analog sample values for duplication during decimation */
- float a_last_decimated[MAX_ANALOG_CHANNELS];
- /* Flag indicating if decimation mode is active */
- gboolean decimation_mode_active;
+ /* Decimation support - SIMPLIFIED (firmware handles decimation) */
+/* Decimation factor stored for driver information only */
+uint32_t analog_decimation_factor;  // Keep for status/info purposes
+/* Decimation mode flag for driver information only */
+gboolean decimation_mode_active;    // Keep for status/info purposes
+/* Removed: analog_sample_index, a_last_decimated - no longer needed */
+/* Firmware now handles all decimation logic and sample duplication */
 
  /* SW trigger related */
  struct soft_trigger_logic *stl;
@@ -167,6 +165,9 @@ SR_PRIV int update_control_channel_name(struct sr_dev_inst *sdi, int channel_ind
   * because sw based only has internal storage for logic */
  float *a_pretrig_bufs[MAX_ANALOG_CHANNELS];
  uint32_t pretrig_wr_ptr;
+ 
+ /* Rate limiting for stop commands */
+ uint64_t last_stop_command_time;
  };
  
  SR_PRIV int raspberrypi_pico_receive(int fd, int revents, void *cb_data);
@@ -185,9 +186,9 @@ SR_PRIV int update_control_channel_name(struct sr_dev_inst *sdi, int channel_ind
  void rle_memset(struct dev_context *devc, uint32_t num_slices);
  SR_PRIV int check_marker(struct dev_context *d, int *len);
 
- /* Decimation support functions */
- SR_PRIV void calculate_decimation_factor(struct dev_context *devc);
- SR_PRIV void process_decimated_analog_sample(struct sr_dev_inst *sdi, struct dev_context *devc);
+ /* Decimation support functions - SIMPLIFIED */
+SR_PRIV void calculate_decimation_factor(struct dev_context *devc);  // Still needed for initial setup
+SR_PRIV void process_analog_sample(struct sr_dev_inst *sdi, struct dev_context *devc);  // Simplified processing
  
  
  #endif
