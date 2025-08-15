@@ -744,8 +744,8 @@ void process_slice(struct sr_dev_inst *sdi, struct dev_context *devc)
     }
     
         len = total_read; /* Update len to reflect total bytes read */
-    sr_spew("STREAMING READ: wrptr %u bytes_rem %u total_read %d attempts %d", 
-            devc->wrptr, bytes_rem, len, read_attempts);
+    // sr_spew("STREAMING READ: wrptr %u bytes_rem %u total_read %d attempts %d", 
+    //         devc->wrptr, bytes_rem, len, read_attempts);
     
     /* Debug info for high-speed streaming performance monitoring */
     if (len > 4096) {

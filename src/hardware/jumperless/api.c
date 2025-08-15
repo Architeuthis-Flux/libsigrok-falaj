@@ -309,15 +309,17 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
         sr_dbg("Full response: '%s'", buf);
         sr_dbg("Analog part starts at position %ld: '%.8s'", a_start - buf, a_start);
         
-        /* Parse analog channels (first 2 digits) and bytes per sample (3rd digit) */
+        /* Parse analog channels (first 2 digits) and bytes per sample (3rd digit)
+         * a_start points to the FIRST digit after "...A" (not to 'A').
+         */
         if (d_pos - a_start >= 3) {
             char temp_buf[3];
-            temp_buf[0] = a_start[1];  /* Skip 'A', start with first digit */
-            temp_buf[1] = a_start[2];  /* Second digit */
+            temp_buf[0] = a_start[0];  /* First analog channel digit */
+            temp_buf[1] = a_start[1];  /* Second analog channel digit */
             temp_buf[2] = '\0';
             num_a = atoi(temp_buf);
             original_num_a = num_a;
-            a_size = a_start[3] - '0';  /* 4th digit is bytes per sample */
+            a_size = a_start[2] - '0';  /* Third character is bytes per sample (e.g., '2') */
             original_a_size = a_size;
             
             sr_dbg("Parsed analog: channels=%d, bytes_per_sample=%d", num_a, a_size);
@@ -332,7 +334,7 @@ static int enable_control_channels(struct sr_dev_inst *sdi, int num_channels);
                 sr_warn("Firmware reported suspiciously high analog sample size (%d bytes) - this may indicate a firmware bug", a_size);
             }
         } else {
-            num_a = atoi(a_start + 1);  /* Skip 'A' for fallback too */
+            num_a = atoi(a_start);  /* a_start already points at first digit */
             original_num_a = num_a;
             a_size = 2;
             original_a_size = a_size;
